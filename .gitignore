@@ -19,3 +19,5 @@ local.properties
 /.snow
 AGENTS.md
 /.spec-workflow/
+/.ai_state/
+*tmpclaude*
