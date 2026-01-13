@@ -92,6 +92,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -113,6 +114,9 @@ import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -122,6 +126,8 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
+import moe.ouom.neriplayer.R
+import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.ui.viewmodel.DownloadManagerViewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -160,6 +166,27 @@ fun LocalPlaylistDetailScreen(
     val ui = vm.uiState.collectAsState()
     LaunchedEffect(playlistId) { vm.start(playlistId) }
 
+    // 保存最新的歌单数据，用于在Screen销毁时更新使用记录
+    var latestPlaylist by remember { mutableStateOf<moe.ouom.neriplayer.data.LocalPlaylist?>(null) }
+    LaunchedEffect(ui.value.playlist) {
+        ui.value.playlist?.let { latestPlaylist = it }
+    }
+
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    DisposableEffect(Unit) {
+        onDispose {
+            latestPlaylist?.let { playlist ->
+                AppContainer.playlistUsageRepo.updateInfo(
+                    id = playlist.id,
+                    name = playlist.name,
+                    picUrl = playlist.songs.lastOrNull()?.coverUrl,
+                    trackCount = playlist.songs.size,
+                    source = "local"
+                )
+            }
+        }
+    }
+
     val playlistOrNull = ui.value.playlist
 
     AnimatedVisibility(
@@ -177,12 +204,12 @@ fun LocalPlaylistDetailScreen(
                     containerColor = Color.Transparent,
                     topBar = {
                         TopAppBar(
-                            title = { Text("歌单") },
+                            title = { Text(stringResource(R.string.playlist_title)) },
                             navigationIcon = {
                                 HapticIconButton(onClick = onBack) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "返回"
+                                        contentDescription = stringResource(R.string.action_back)
                                     )
                                 }
                             },
@@ -206,10 +233,11 @@ fun LocalPlaylistDetailScreen(
                 return@Surface
             }
 
-            val playlist = playlistOrNull
-            val isFavorites = playlist.name == LocalPlaylistRepository.FAVORITES_NAME
-
             val context = LocalContext.current
+            val clipboardManager = LocalClipboardManager.current
+            val playlist = playlistOrNull
+            val isFavorites = playlist.name == "我喜欢的音乐" || playlist.name == "My Favorite Music"
+
             val repo = remember(context) { LocalPlaylistRepository.getInstance(context) }
             val allPlaylists by repo.playlists.collectAsState()
 
@@ -278,9 +306,9 @@ fun LocalPlaylistDetailScreen(
             var renameError by remember { mutableStateOf<String?>(null) }
             fun validateRename(input: String): String? {
                 val name = input.trim()
-                if (name.isEmpty()) return "名称不能为空哦"
-                if (name.equals(LocalPlaylistRepository.FAVORITES_NAME, ignoreCase = true)) {
-                    return "该名称已保留为“${LocalPlaylistRepository.FAVORITES_NAME}”"
+                if (name.isEmpty()) return context.getString(R.string.playlist_name_empty)
+                if (name.equals(context.getString(R.string.favorite_my_music), ignoreCase = true)) {
+                    return context.getString(R.string.library_name_reserved, context.getString(R.string.favorite_my_music))
                 }
                 if (allPlaylists.any {
                         it.id != playlist.id && it.name.equals(
@@ -288,7 +316,7 @@ fun LocalPlaylistDetailScreen(
                             ignoreCase = true
                         )
                     }) {
-                    return "已存在同名歌单，请换一个名称"
+                    return context.getString(R.string.library_name_exists)
                 }
                 return null
             }
@@ -309,12 +337,12 @@ fun LocalPlaylistDetailScreen(
                                 }
                             },
                             enabled = !disabled
-                        ) { Text("确定") }
+                        ) { Text(stringResource(R.string.action_confirm)) }
                     },
                     dismissButton = {
                         HapticTextButton(onClick = {
                             showRename = false
-                        }) { Text("取消") }
+                        }) { Text(stringResource(R.string.action_cancel)) }
                     },
                     text = {
                         OutlinedTextField(
@@ -331,7 +359,7 @@ fun LocalPlaylistDetailScreen(
                             }
                         )
                     },
-                    title = { Text("重命名歌单") }
+                    title = { Text(stringResource(R.string.local_playlist_rename)) }
                 )
             }
 
@@ -384,8 +412,9 @@ fun LocalPlaylistDetailScreen(
                     if (!selectionMode) {
                         TopAppBar(
                             title = {
+                                val displayName = if (isFavorites) stringResource(R.string.favorite_my_music) else playlist.name
                                 Text(
-                                    playlist.name,
+                                    displayName,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -394,7 +423,7 @@ fun LocalPlaylistDetailScreen(
                                 HapticIconButton(onClick = onBack) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "返回"
+                                        contentDescription = stringResource(R.string.action_back)
                                     )
                                 }
                             },
@@ -402,7 +431,7 @@ fun LocalPlaylistDetailScreen(
                                 HapticIconButton(onClick = {
                                     showSearch = !showSearch
                                     if (!showSearch) searchQuery = ""
-                                }) { Icon(Icons.Filled.Search, contentDescription = "搜索歌曲") }
+                                }) { Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.cd_search_songs)) }
                                 
                                 if (batchDownloadProgress != null) {
                                     HapticIconButton(
@@ -410,7 +439,7 @@ fun LocalPlaylistDetailScreen(
                                     ) {
                                         Icon(
                                             Icons.Outlined.Download,
-                                            contentDescription = "下载管理器",
+                                            contentDescription = stringResource(R.string.cd_download_manager),
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
@@ -422,14 +451,14 @@ fun LocalPlaylistDetailScreen(
                                         renameError = null
                                         showRename = true
                                     }) {
-                                        Icon(Icons.Filled.Edit, contentDescription = "重命名")
+                                        Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.local_playlist_rename))
                                     }
                                     HapticIconButton(onClick = {
                                         showDeletePlaylistConfirm = true
                                     }) {
                                         Icon(
                                             Icons.Filled.Delete,
-                                            contentDescription = "删除歌单"
+                                            contentDescription = stringResource(R.string.local_playlist_delete)
                                         )
                                     }
                                 }
@@ -444,12 +473,12 @@ fun LocalPlaylistDetailScreen(
                         val allSelected =
                             selectedIdsState.value.size == localSongs.size && localSongs.isNotEmpty()
                         TopAppBar(
-                            title = { Text("已选 ${selectedIdsState.value.size} 项") },
+                            title = { Text(stringResource(R.string.common_selected_count, selectedIdsState.value.size)) },
                             navigationIcon = {
                                 HapticIconButton(onClick = { exitSelectionMode() }) {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "退出多选"
+                                        contentDescription = stringResource(R.string.cd_exit_select)
                                     )
                                 }
                             },
@@ -457,7 +486,7 @@ fun LocalPlaylistDetailScreen(
                                 HapticIconButton(onClick = { if (allSelected) clearSelection() else selectAll() }) {
                                     Icon(
                                         imageVector = if (allSelected) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = if (allSelected) "取消全选" else "全选"
+                                        contentDescription = if (allSelected) stringResource(R.string.action_deselect_all) else stringResource(R.string.action_select_all)
                                     )
                                 }
                                 HapticIconButton(
@@ -469,7 +498,7 @@ fun LocalPlaylistDetailScreen(
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Outlined.PlaylistAdd,
-                                        contentDescription = "导出到歌单"
+                                        contentDescription = stringResource(R.string.cd_export_playlist)
                                     )
                                 }
                                 HapticIconButton(
@@ -484,7 +513,7 @@ fun LocalPlaylistDetailScreen(
                                 ) {
                                     Icon(
                                         Icons.Outlined.Download,
-                                        contentDescription = "下载所选歌曲"
+                                        contentDescription = stringResource(R.string.cd_download_selected)
                                     )
                                 }
                                 HapticIconButton(
@@ -494,7 +523,7 @@ fun LocalPlaylistDetailScreen(
                                     },
                                     enabled = selectedIdsState.value.isNotEmpty()
                                 ) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "删除所选")
+                                    Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.common_delete_selected))
                                 }
                             },
                             windowInsets = WindowInsets.statusBars,
@@ -528,7 +557,7 @@ fun LocalPlaylistDetailScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                            placeholder = { Text("搜索歌单内歌曲") },
+                            placeholder = { Text(stringResource(R.string.search_playlist)) },
                             singleLine = true
                         )
                     }
@@ -551,7 +580,7 @@ fun LocalPlaylistDetailScreen(
                                         .fillMaxWidth()
                                         .height(headerHeight)
                                 ) {
-                                    // 头图取“展示顺序”的第一张有封面的
+                                    // 头图取"展示顺序"的第一张有封面的
                                     val baseQueue = localSongs.asReversed()
                                     val headerCover = baseQueue.firstOrNull { !it.coverUrl.isNullOrBlank() }?.coverUrl
                                     AsyncImage(
@@ -580,8 +609,9 @@ fun LocalPlaylistDetailScreen(
                                             .align(Alignment.BottomStart)
                                             .padding(horizontal = 16.dp, vertical = 12.dp)
                                     ) {
+                                        val headerDisplayName = if (isFavorites) stringResource(R.string.favorite_my_music) else playlist.name
                                         Text(
-                                            text = playlist.name,
+                                            text = headerDisplayName,
                                             style = MaterialTheme.typography.headlineSmall.copy(
                                                 shadow = Shadow(
                                                     color = Color.Black.copy(alpha = 0.6f),
@@ -595,7 +625,7 @@ fun LocalPlaylistDetailScreen(
                                         )
                                         Spacer(Modifier.height(4.dp))
                                         Text(
-                                            text = "${formatTotalDuration(totalDurationMs)} · ${localSongs.size} 首",
+                                            text = stringResource(R.string.local_playlist_total_duration, formatTotalDuration(context, totalDurationMs), localSongs.size),
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 shadow = Shadow(
                                                     color = Color.Black.copy(alpha = 0.6f),
@@ -708,7 +738,7 @@ fun LocalPlaylistDetailScreen(
                                                     if (AudioDownloadManager.getLocalFilePath(LocalContext.current, song) != null) {
                                                         Icon(
                                                             imageVector = Icons.Outlined.DownloadDone,
-                                                            contentDescription = "已下载",
+                                                            contentDescription = stringResource(R.string.downloaded),
                                                             modifier = Modifier.size(16.dp),
                                                             tint = MaterialTheme.colorScheme.primary
                                                         )
@@ -756,7 +786,7 @@ fun LocalPlaylistDetailScreen(
                                                         ) {
                                                             Icon(
                                                                 Icons.Filled.MoreVert,
-                                                                contentDescription = "更多操作",
+                                                                contentDescription = stringResource(R.string.cd_more_actions),
                                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                                             )
                                                         }
@@ -766,16 +796,27 @@ fun LocalPlaylistDetailScreen(
                                                             onDismissRequest = { showMoreMenu = false }
                                                         ) {
                                                             DropdownMenuItem(
-                                                                text = { Text("接下来播放...") },
+                                                                text = { Text(stringResource(R.string.local_playlist_play_next)) },
                                                                 onClick = {
                                                                     PlayerManager.addToQueueNext(song)
                                                                     showMoreMenu = false
                                                                 }
                                                             )
                                                             DropdownMenuItem(
-                                                                text = { Text("添加到播放队列末尾") },
+                                                                text = { Text(stringResource(R.string.playlist_add_to_queue)) },
                                                                 onClick = {
                                                                     PlayerManager.addToQueueEnd(song)
+                                                                    showMoreMenu = false
+                                                                }
+                                                            )
+                                                            DropdownMenuItem(
+                                                                text = { Text(stringResource(R.string.action_copy_song_info)) },
+                                                                onClick = {
+                                                                    val songInfo = "${song.name}-${song.artist}"
+                                                                    clipboardManager.setText(AnnotatedString(songInfo))
+                                                                    scope.launch {
+                                                                        snackbarHostState.showSnackbar(context.getString(R.string.toast_copied))
+                                                                    }
                                                                     showMoreMenu = false
                                                                 }
                                                             )
@@ -792,7 +833,7 @@ fun LocalPlaylistDetailScreen(
                                             ) {
                                                 Icon(
                                                     imageVector = Icons.Filled.DragHandle,
-                                                    contentDescription = "拖拽手柄",
+                                                    contentDescription = stringResource(R.string.common_drag_handle),
                                                     modifier = Modifier.size(24.dp)
                                                 )
                                             }
@@ -826,7 +867,7 @@ fun LocalPlaylistDetailScreen(
                             ) {
                                 Icon(
                                     Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                    contentDescription = "定位到正在播放"
+                                    contentDescription = stringResource(R.string.cd_locate_playing)
                                 )
                             }
                         }
@@ -839,18 +880,18 @@ fun LocalPlaylistDetailScreen(
                 if (showDeletePlaylistConfirm) {
                     AlertDialog(
                         onDismissRequest = { showDeletePlaylistConfirm = false },
-                        title = { Text("删除歌单") },
-                        text = { Text("确定要删除此歌单吗？此操作不可恢复！") },
+                        title = { Text(stringResource(R.string.local_playlist_delete)) },
+                        text = { Text(stringResource(R.string.local_playlist_delete_confirm)) },
                         confirmButton = {
                             HapticTextButton(onClick = {
                                 vm.delete { ok -> if (ok) onDeleted() }
                                 showDeletePlaylistConfirm = false
-                            }) { Text("删除") }
+                            }) { Text(stringResource(R.string.action_delete)) }
                         },
                         dismissButton = {
                             HapticTextButton(onClick = {
                                 showDeletePlaylistConfirm = false
-                            }) { Text("取消") }
+                            }) { Text(stringResource(R.string.action_cancel)) }
                         }
                     )
                 }
@@ -860,8 +901,8 @@ fun LocalPlaylistDetailScreen(
                     val count = selectedIdsState.value.size
                     AlertDialog(
                         onDismissRequest = { showDeleteMultiConfirm = false },
-                        title = { Text("删除所选歌曲") },
-                        text = { Text("确定要从歌单移除所选的 $count 首歌曲吗？") },
+                        title = { Text(stringResource(R.string.local_playlist_delete_songs)) },
+                        text = { Text(stringResource(R.string.local_playlist_delete_songs_confirm, count)) },
                         confirmButton = {
                             HapticTextButton(onClick = {
                                 val ids: List<Long> = selectedIdsState.value.toList()
@@ -875,12 +916,12 @@ fun LocalPlaylistDetailScreen(
                                 exitSelectionMode()
 
                                 vm.removeSongs(ids)
-                            }) { Text("删除（$count）") }
+                            }) { Text(stringResource(R.string.local_playlist_delete_count, count)) }
                         },
                         dismissButton = {
                             HapticTextButton(onClick = {
                                 showDeleteMultiConfirm = false
-                            }) { Text("取消") }
+                            }) { Text(stringResource(R.string.action_cancel)) }
                         }
                     )
                 }
@@ -892,7 +933,7 @@ fun LocalPlaylistDetailScreen(
                         sheetState = exportSheetState
                     ) {
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                            Text("导出到歌单", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.local_playlist_export_to), style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.height(8.dp))
 
                             LazyColumn {
@@ -917,7 +958,7 @@ fun LocalPlaylistDetailScreen(
                                         Text(pl.name, style = MaterialTheme.typography.bodyLarge)
                                         Spacer(Modifier.weight(1f))
                                         Text(
-                                            "${pl.songs.size} 首",
+                                            stringResource(R.string.explore_song_count, pl.songs.size),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -934,7 +975,7 @@ fun LocalPlaylistDetailScreen(
                                     value = newName,
                                     onValueChange = { newName = it },
                                     modifier = Modifier.weight(1f),
-                                    placeholder = { Text("新建歌单名称") },
+                                    placeholder = { Text(stringResource(R.string.playlist_create_name)) },
                                     singleLine = true
                                 )
                                 Spacer(Modifier.width(12.dp))
@@ -957,7 +998,7 @@ fun LocalPlaylistDetailScreen(
                                             showExportSheet = false
                                         }
                                     }
-                                ) { Text("新建并导出") }
+                                ) { Text(stringResource(R.string.playlist_create_and_export)) }
                             }
                             Spacer(Modifier.height(12.dp))
                         }
@@ -980,7 +1021,7 @@ fun LocalPlaylistDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "下载管理器",
+                                    stringResource(R.string.download_manager),
                                     style = MaterialTheme.typography.titleLarge
                                 )
                                 HapticIconButton(
@@ -988,7 +1029,7 @@ fun LocalPlaylistDetailScreen(
                                 ) {
                                     Icon(
                                         Icons.Filled.Close,
-                                        contentDescription = "关闭"
+                                        contentDescription = stringResource(R.string.cd_close)
                                     )
                                 }
                             }
@@ -1012,25 +1053,25 @@ fun LocalPlaylistDetailScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Text(
-                                                "下载进度: ${progress.completedSongs}/${progress.totalSongs}",
+                                                stringResource(R.string.bili_download_progress_format, progress.completedSongs, progress.totalSongs),
                                                 style = MaterialTheme.typography.titleMedium
                                             )
                                             HapticTextButton(
                                                 onClick = {
                                                     AudioDownloadManager.cancelDownload()
                                                     scope.launch {
-                                                        snackbarHostState.showSnackbar("下载已取消")
+                                                        snackbarHostState.showSnackbar(context.getString(R.string.download_cancelled))
                                                     }
                                                 }
                                             ) {
-                                                Text("取消", color = MaterialTheme.colorScheme.error)
+                                                Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.error)
                                             }
                                         }
-                                        
+
                                         if (progress.currentSong.isNotBlank()) {
                                             Spacer(modifier = Modifier.height(8.dp))
                                             Text(
-                                                "正在下载: ${progress.currentSong}",
+                                                stringResource(R.string.settings_downloading, progress.currentSong),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -1040,7 +1081,7 @@ fun LocalPlaylistDetailScreen(
                                         
                                         // 总体进度条
                                         Text(
-                                            "总体进度: ${progress.percentage}%",
+                                            stringResource(R.string.download_overall_progress, progress.percentage),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -1061,7 +1102,7 @@ fun LocalPlaylistDetailScreen(
                                         progress.currentProgress?.let { currentProgress ->
                                             Spacer(modifier = Modifier.height(12.dp))
                                             Text(
-                                                "当前文件: ${currentProgress.percentage}% (${currentProgress.speedBytesPerSec / 1024} KB/s)",
+                                                stringResource(R.string.download_current_file_progress, currentProgress.percentage, currentProgress.speedBytesPerSec / 1024),
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -1096,13 +1137,13 @@ fun LocalPlaylistDetailScreen(
                                     )
                                     Spacer(modifier = Modifier.height(16.dp))
                                     Text(
-                                        "暂无下载任务",
+                                        stringResource(R.string.download_no_tasks),
                                         style = MaterialTheme.typography.bodyLarge,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Text(
-                                        "选择歌曲后点击下载按钮开始下载",
+                                        stringResource(R.string.download_select_hint),
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         textAlign = TextAlign.Center

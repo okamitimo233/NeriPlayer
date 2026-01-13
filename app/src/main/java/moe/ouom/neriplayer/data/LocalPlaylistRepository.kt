@@ -34,6 +34,7 @@ import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.data.github.GitHubSyncWorker
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.util.NPLogger
+import moe.ouom.neriplayer.R
 import java.io.File
 
 /** 本地歌单数据模型 */
@@ -69,13 +70,29 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
             emptyList()
         }.toMutableList()
 
-        if (list.none { it.name == FAVORITES_NAME }) {
+        val favoritesName = context.getString(R.string.favorite_my_music)
+
+        // 语言迁移：检查是否存在其他语言版本的"我喜欢的音乐"歌单
+        val possibleFavoriteNames = listOf("我喜欢的音乐", "My Favorite Music")
+        val existingFavorite = list.firstOrNull { it.name in possibleFavoriteNames }
+
+        if (existingFavorite != null && existingFavorite.name != favoritesName) {
+            // 找到了旧语言的收藏歌单，重命名为当前语言
+            val index = list.indexOf(existingFavorite)
+            list[index] = existingFavorite.copy(
+                name = favoritesName,
+                modifiedAt = System.currentTimeMillis()
+            )
+            NPLogger.i("LocalPlaylistRepo", "Migrated favorites playlist from '${existingFavorite.name}' to '$favoritesName'")
+        } else if (existingFavorite == null) {
+            // 不存在收藏歌单，创建一个新的
             list.add(0, LocalPlaylist(
                 id = System.currentTimeMillis(),
-                name = FAVORITES_NAME,
+                name = favoritesName,
                 modifiedAt = System.currentTimeMillis()
             ))
         }
+
         _playlists.value = list
         saveToDisk(triggerSync = false)  // 加载时不触发同步
     }
@@ -129,9 +146,17 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
         }
     }
 
-    /** 将歌曲添加到“我喜欢的音乐” */
+    /** 将歌曲添加到"我喜欢的音乐" */
     suspend fun addToFavorites(song: SongItem) {
-        val fav = _playlists.value.firstOrNull { it.name == FAVORITES_NAME } ?: return
+        val favoritesName = context.getString(R.string.favorite_my_music)
+        // 尝试多种可能的收藏夹名称
+        val fav = _playlists.value.firstOrNull {
+            it.name == favoritesName ||
+            it.name == "我喜欢的音乐" ||
+            it.name == "My Favorite Music" ||
+            it.name.contains("Favorite", ignoreCase = true) ||
+            it.name.contains("喜欢", ignoreCase = true)
+        } ?: return
         addSongToPlaylist(fav.id, song)
     }
 
@@ -139,9 +164,10 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
     suspend fun renamePlaylist(playlistId: Long, newName: String) {
         withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()
+            val favoritesName = context.getString(R.string.favorite_my_music)
             val updated = _playlists.value.map { pl ->
                 if (pl.id == playlistId) {
-                    if (pl.name == FAVORITES_NAME) pl else pl.copy(name = newName, modifiedAt = now)
+                    if (pl.name == favoritesName) pl else pl.copy(name = newName, modifiedAt = now)
                 } else pl
             }
             _playlists.value = updated
@@ -174,7 +200,8 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
         return withContext(Dispatchers.IO) {
             val list = _playlists.value.toMutableList()
             val pl = list.find { it.id == playlistId } ?: return@withContext false
-            if (pl.name == FAVORITES_NAME) return@withContext false
+            val favoritesName = context.getString(R.string.favorite_my_music)
+            if (pl.name == favoritesName) return@withContext false
             list.remove(pl)
             _playlists.value = list
 
@@ -290,8 +317,6 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
     }
 
     companion object {
-        const val FAVORITES_NAME = "我喜欢的音乐"
-
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var INSTANCE: LocalPlaylistRepository? = null
@@ -307,8 +332,14 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
     suspend fun removeFromFavorites(songId: Long) {
         withContext(Dispatchers.IO) {
             val now = System.currentTimeMillis()
+            val favoritesName = context.getString(R.string.favorite_my_music)
             val updated = _playlists.value.map { pl ->
-                if (pl.name == FAVORITES_NAME)
+                // 尝试多种可能的收藏夹名称
+                if (pl.name == favoritesName ||
+                    pl.name == "我喜欢的音乐" ||
+                    pl.name == "My Favorite Music" ||
+                    pl.name.contains("Favorite", ignoreCase = true) ||
+                    pl.name.contains("喜欢", ignoreCase = true))
                     pl.copy(songs = pl.songs.filter { it.id != songId }.toMutableList(), modifiedAt = now)
                 else pl
             }
@@ -319,6 +350,23 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
 
     suspend fun updateSongMetadata(songId: Long, albumIdentifier: String, newSongInfo: SongItem) {
         withContext(Dispatchers.IO) {
+            // 保存封面地址映射（如果新封面是本地地址）
+            try {
+                val mapper = moe.ouom.neriplayer.data.github.CoverUrlMapper.getInstance(context)
+
+                // 保存主封面映射
+                if (newSongInfo.coverUrl != null && newSongInfo.originalCoverUrl != null) {
+                    mapper.saveCoverMapping(newSongInfo.coverUrl, newSongInfo.originalCoverUrl)
+                }
+
+                // 保存自定义封面映射
+                if (newSongInfo.customCoverUrl != null && newSongInfo.originalCoverUrl != null) {
+                    mapper.saveCoverMapping(newSongInfo.customCoverUrl, newSongInfo.originalCoverUrl)
+                }
+            } catch (e: Exception) {
+                NPLogger.e("LocalPlaylistRepo", "Failed to save cover mapping", e)
+            }
+
             val updatedPlaylists = _playlists.value.map { playlist ->
                 val songIndex = playlist.songs.indexOfFirst { it.id == songId && it.album == albumIdentifier }
 
@@ -326,7 +374,7 @@ class LocalPlaylistRepository private constructor(private val context: Context) 
                     val updatedSongs = playlist.songs.toMutableList().apply {
                         this[songIndex] = newSongInfo
                     }
-                    playlist.copy(songs = updatedSongs)
+                    playlist.copy(songs = updatedSongs, modifiedAt = System.currentTimeMillis())
                 } else {
                     playlist
                 }

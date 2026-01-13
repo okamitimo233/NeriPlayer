@@ -1,4 +1,4 @@
-package moe.ouom.neriplayer.ui.screen.playlist
+﻿package moe.ouom.neriplayer.ui.screen.playlist
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -58,6 +58,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,7 +71,9 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
+import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.core.api.bili.BiliClient
+import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.ui.LocalMiniPlayerHeight
 import moe.ouom.neriplayer.ui.viewmodel.tab.BiliPlaylist
@@ -97,6 +102,7 @@ fun BiliPlaylistDetailScreen(
     onPlayParts: (BiliClient.VideoBasicInfo, Int, String) -> Unit = { _, _, _ -> }
 ) {
     val context = LocalContext.current
+    val snackbarHostState = remember { SnackbarHostState() }
     val vm: BiliPlaylistDetailViewModel = viewModel(
         factory = viewModelFactory {
             initializer {
@@ -106,7 +112,33 @@ fun BiliPlaylistDetailScreen(
         }
     )
     val ui by vm.uiState.collectAsState()
-    LaunchedEffect(playlist.mediaId) { vm.start(playlist) }
+    // 使用Unit作为key，确保每次进入都重新加载最新数据
+    LaunchedEffect(Unit) { vm.start(playlist) }
+
+    // 保存最新的header和videos数据，用于在Screen销毁时更新使用记录
+    var latestHeader by remember { mutableStateOf<BiliPlaylist?>(null) }
+    var latestVideosSize by remember { mutableStateOf(0) }
+    LaunchedEffect(ui.header, ui.videos.size) {
+        ui.header?.let { latestHeader = it }
+        latestVideosSize = ui.videos.size
+    }
+
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    DisposableEffect(Unit) {
+        onDispose {
+            latestHeader?.let { header ->
+                AppContainer.playlistUsageRepo.updateInfo(
+                    id = header.mediaId,
+                    name = header.title,
+                    picUrl = header.coverUrl,
+                    trackCount = latestVideosSize,
+                    fid = header.fid,
+                    mid = header.mid,
+                    source = "bili"
+                )
+            }
+        }
+    }
 
     // 下载进度
     var showDownloadManager by remember { mutableStateOf(false) }
@@ -170,20 +202,20 @@ fun BiliPlaylistDetailScreen(
                         },
                         navigationIcon = {
                             HapticIconButton(onClick = onBack) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.action_back))
                             }
                         },
                         actions = {
                             HapticIconButton(onClick = {
                                 showSearch = !showSearch
                                 if (!showSearch) searchQuery = ""
-                            }) { Icon(Icons.Filled.Search, contentDescription = "搜索视频") }
+                            }) { Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.search_video)) }
 
                             if (batchDownloadProgress != null) {
                                 HapticIconButton(onClick = { showDownloadManager = true }) {
                                     Icon(
                                         Icons.Outlined.Download,
-                                        contentDescription = "下载管理器",
+                                        contentDescription = stringResource(R.string.download_manager),
                                         tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
@@ -198,24 +230,24 @@ fun BiliPlaylistDetailScreen(
                 } else {
                     val allSelected = selectedIds.size == ui.videos.size && ui.videos.isNotEmpty()
                     TopAppBar(
-                        title = { Text("已选 ${selectedIds.size} 项") },
+                        title = { Text(stringResource(R.string.common_selected_count, selectedIds.size)) },
                         navigationIcon = {
                             HapticIconButton(onClick = { exitSelection() }) {
-                                Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_exit_multi_select))
                             }
                         },
                         actions = {
                             HapticIconButton(onClick = { if (allSelected) clearSelection() else selectAll() }) {
                                 Icon(
                                     imageVector = if (allSelected) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
-                                    contentDescription = if (allSelected) "取消全选" else "全选"
+                                    contentDescription = if (allSelected) stringResource(R.string.action_deselect_all) else stringResource(R.string.action_select_all)
                                 )
                             }
                             HapticIconButton(
                                 onClick = { if (selectedIds.isNotEmpty()) showExportSheet = true },
                                 enabled = selectedIds.isNotEmpty()
                             ) {
-                                Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = "导出到歌单")
+                                Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = stringResource(R.string.explore_export_to_playlist))
                             }
                             HapticIconButton(
                                 onClick = {
@@ -231,7 +263,7 @@ fun BiliPlaylistDetailScreen(
                                 },
                                 enabled = selectedIds.isNotEmpty()
                             ) {
-                                Icon(Icons.Outlined.Download, contentDescription = "下载选中视频")
+                                Icon(Icons.Outlined.Download, contentDescription = stringResource(R.string.download_selected_videos))
                             }
                         },
                         windowInsets = WindowInsets.statusBars,
@@ -249,7 +281,7 @@ fun BiliPlaylistDetailScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 8.dp),
-                        placeholder = { Text("搜索收藏夹内视频") },
+                        placeholder = { Text(stringResource(R.string.search_playlist)) },
                         singleLine = true
                     )
                 }
@@ -279,7 +311,7 @@ fun BiliPlaylistDetailScreen(
                                         horizontalArrangement = Arrangement.Center
                                     ) {
                                         CircularProgressIndicator()
-                                        Text("  正在加载收藏夹内容...")
+                                        Text(stringResource(R.string.bili_loading_favorites))
                                     }
                                 }
                             }
@@ -290,7 +322,7 @@ fun BiliPlaylistDetailScreen(
                                         horizontalAlignment = Alignment.CenterHorizontally
                                     ) {
                                         Text(
-                                            text = "加载失败: ${ui.error}",
+                                            text = stringResource(R.string.bili_load_failed, ui.error ?: ""),
                                             color = MaterialTheme.colorScheme.error
                                         )
                                         Spacer(Modifier.height(8.dp))
@@ -300,7 +332,7 @@ fun BiliPlaylistDetailScreen(
                                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
                                         ) {
                                             Text(
-                                                "点我重试",
+                                                stringResource(R.string.action_retry),
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                                 color = MaterialTheme.colorScheme.onPrimaryContainer
                                             )
@@ -336,10 +368,11 @@ fun BiliPlaylistDetailScreen(
                                                         showPartsSheet = true
                                                     }
                                                 } catch (e: Exception) {
-                                                    NPLogger.e("BiliPlaylistDetail", "获取分 P 失败", e)
+                                                    NPLogger.e("BiliPlaylistDetail", context.getString(R.string.bili_get_parts_failed), e)
                                                 }
                                             }
-                                        }
+                                        },
+                                        snackbarHostState = snackbarHostState
                                     )
                                 }
                             }
@@ -354,7 +387,7 @@ fun BiliPlaylistDetailScreen(
                     sheetState = exportSheetState
                 ) {
                     Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                        Text("导出到本地歌单", style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.playlist_export_to_local), style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(8.dp))
 
                         LazyColumn {
@@ -386,7 +419,7 @@ fun BiliPlaylistDetailScreen(
                                 ) {
                                     Text(pl.name, style = MaterialTheme.typography.bodyLarge)
                                     Spacer(Modifier.weight(1f))
-                                    Text("${pl.songs.size} 首", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.explore_song_count, pl.songs.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -401,7 +434,7 @@ fun BiliPlaylistDetailScreen(
                                 value = newName,
                                 onValueChange = { newName = it },
                                 modifier = Modifier.weight(1f),
-                                placeholder = { Text("新建歌单名称") },
+                                placeholder = { Text(stringResource(R.string.playlist_create_name)) },
                                 singleLine = true
                             )
                             Spacer(Modifier.width(12.dp))
@@ -433,7 +466,7 @@ fun BiliPlaylistDetailScreen(
                                         exitPartsSelection()
                                     }
                                 }
-                            ) { Text("新建并导出") }
+                            ) { Text(stringResource(R.string.playlist_create_and_export)) }
                         }
                         Spacer(Modifier.height(12.dp))
                     }
@@ -456,11 +489,11 @@ fun BiliPlaylistDetailScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                "下载管理器",
+                                stringResource(R.string.download_manager),
                                 style = MaterialTheme.typography.titleLarge
                             )
                             HapticIconButton(onClick = { showDownloadManager = false }) {
-                                Icon(Icons.Filled.Close, contentDescription = "关闭")
+                                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_close))
                             }
                         }
 
@@ -480,18 +513,18 @@ fun BiliPlaylistDetailScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            "下载进度: ${progress.completedSongs}/${progress.totalSongs}",
+                                            stringResource(R.string.bili_download_progress_format, progress.completedSongs, progress.totalSongs),
                                             style = MaterialTheme.typography.titleMedium
                                         )
                                         HapticTextButton(onClick = { AudioDownloadManager.cancelDownload() }) {
-                                            Text("取消", color = MaterialTheme.colorScheme.error)
+                                            Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.error)
                                         }
                                     }
 
                                     if (progress.currentSong.isNotBlank()) {
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text(
-                                            "正在下载: ${progress.currentSong}",
+                                            stringResource(R.string.bili_downloading_current, progress.currentSong),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -500,7 +533,7 @@ fun BiliPlaylistDetailScreen(
                                     Spacer(modifier = Modifier.height(12.dp))
 
                                     Text(
-                                        "总体进度: ${progress.percentage}%",
+                                        stringResource(R.string.download_overall_progress, progress.percentage),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -520,7 +553,7 @@ fun BiliPlaylistDetailScreen(
                                     progress.currentProgress?.let { currentProgress ->
                                         Spacer(modifier = Modifier.height(12.dp))
                                         Text(
-                                            "当前文件: ${currentProgress.percentage}% (${currentProgress.speedBytesPerSec / 1024} KB/s)",
+                                            stringResource(R.string.download_current_file_progress, currentProgress.percentage, currentProgress.speedBytesPerSec / 1024),
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -554,13 +587,13 @@ fun BiliPlaylistDetailScreen(
                                 )
                                 Spacer(modifier = Modifier.height(16.dp))
                                 Text(
-                                    "暂无下载任务",
+                                    stringResource(R.string.download_no_tasks),
                                     style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "选择歌曲后点击下载按钮开始下载",
+                                    stringResource(R.string.download_select_hint),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
@@ -587,10 +620,10 @@ fun BiliPlaylistDetailScreen(
                         AnimatedVisibility(visible = partsSelectionMode) {
                             val allSelected = selectedParts.size == currentPartsInfo.pages.size
                             TopAppBar(
-                                title = { Text("已选 ${selectedParts.size} 项") },
+                                title = { Text(stringResource(R.string.common_selected_count, selectedParts.size)) },
                                 navigationIcon = {
                                     HapticIconButton(onClick = { exitPartsSelection() }) {
-                                        Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.action_exit_multi_select))
                                     }
                                 },
                                 actions = {
@@ -603,7 +636,7 @@ fun BiliPlaylistDetailScreen(
                                     }) {
                                         Icon(
                                             imageVector = if (allSelected) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
-                                            contentDescription = if (allSelected) "取消全选" else "全选"
+                                            contentDescription = if (allSelected) stringResource(R.string.action_deselect_all) else stringResource(R.string.action_select_all)
                                         )
                                     }
                                     HapticIconButton(
@@ -619,7 +652,7 @@ fun BiliPlaylistDetailScreen(
                                         },
                                         enabled = selectedParts.isNotEmpty()
                                     ) {
-                                        Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = "导出到歌单")
+                                        Icon(Icons.AutoMirrored.Outlined.PlaylistAdd, contentDescription = stringResource(R.string.explore_export_to_playlist))
                                     }
                                 },
                                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -769,7 +802,7 @@ private fun Header(playlist: BiliPlaylist, headerData: BiliPlaylist?) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${displayData.count} 个内容",
+                text = stringResource(R.string.bili_content_count, displayData.count),
                 style = MaterialTheme.typography.bodySmall.copy(
                     shadow = Shadow(color = Color.Black.copy(alpha = 0.6f), offset = Offset(2f, 2f), blurRadius = 4f)
                 ),
@@ -788,9 +821,12 @@ private fun VideoRow(
     selected: Boolean,
     onToggleSelect: () -> Unit,
     onLongPress: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    snackbarHostState: SnackbarHostState
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -864,7 +900,7 @@ private fun VideoRow(
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
-                        contentDescription = "更多操作",
+                        contentDescription = stringResource(R.string.common_more_actions),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -874,7 +910,7 @@ private fun VideoRow(
                     onDismissRequest = { showMoreMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("接下来播放...") },
+                        text = { Text(stringResource(R.string.playlist_add_to_queue)) },
                         onClick = {
                             val songItem = video.toSongItem()
                             PlayerManager.addToQueueNext(songItem)
@@ -882,10 +918,21 @@ private fun VideoRow(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("添加到播放队列末尾") },
+                        text = { Text(stringResource(R.string.playlist_add_to_end)) },
                         onClick = {
                             val songItem = video.toSongItem()
                             PlayerManager.addToQueueEnd(songItem)
+                            showMoreMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.action_copy_song_info)) },
+                        onClick = {
+                            val songInfo = "${video.title}-${video.uploader}"
+                            clipboardManager.setText(AnnotatedString(songInfo))
+                            scope.launch {
+                                snackbarHostState.showSnackbar(context.getString(R.string.toast_copied))
+                            }
                             showMoreMenu = false
                         }
                     )

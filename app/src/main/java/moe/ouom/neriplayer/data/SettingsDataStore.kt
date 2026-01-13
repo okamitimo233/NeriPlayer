@@ -51,6 +51,7 @@ object SettingsKeys {
     val THEME_SEED_COLOR = stringPreferencesKey("theme_seed_color")
     val THEME_COLOR_PALETTE = stringPreferencesKey("theme_color_palette_v2")
     val LYRIC_BLUR_ENABLED = booleanPreferencesKey("lyric_blur_enabled")
+    val LYRIC_BLUR_AMOUNT = floatPreferencesKey("lyric_blur_amount")
     val LYRIC_FONT_SCALE = floatPreferencesKey("lyric_font_scale")
     val UI_DENSITY_SCALE = floatPreferencesKey("ui_density_scale")
     val BYPASS_PROXY = booleanPreferencesKey("bypass_proxy")
@@ -62,20 +63,21 @@ object SettingsKeys {
     val SLEEP_TIMER_ENABLED = booleanPreferencesKey("sleep_timer_enabled")
     val SLEEP_TIMER_MODE = stringPreferencesKey("sleep_timer_mode")
     val SLEEP_TIMER_MINUTES = longPreferencesKey("sleep_timer_minutes")
+    val SHOW_LYRIC_TRANSLATION = booleanPreferencesKey("show_lyric_translation")
 }
 
 
 object ThemeDefaults {
     const val DEFAULT_SEED_COLOR_HEX = "0061A4"
     val PRESET_COLORS = listOf(
-        "0061A4", // 科技·蓝
-        "6750A4", // 柔和·紫
-        "B3261E", // 热情·红
-        "C425A8", // 浪漫·粉
-        "00897B", // 森系·青
-        "388E3C", // 活力·绿
-        "FBC02D", // 明亮·黄
-        "E65100", // 温暖·橙
+        "0061A4",
+        "6750A4",
+        "B3261E",
+        "C425A8",
+        "00897B",
+        "388E3C",
+        "FBC02D",
+        "E65100",
     )
     val PRESET_SET = PRESET_COLORS.map { it.uppercase(Locale.ROOT) }.toSet()
 }
@@ -108,6 +110,9 @@ class SettingsRepository(private val context: Context) {
 
     val lyricBlurEnabledFlow: Flow<Boolean> =
         context.dataStore.data.map { it[SettingsKeys.LYRIC_BLUR_ENABLED] ?: true }
+
+    val lyricBlurAmountFlow: Flow<Float> =
+        context.dataStore.data.map { it[SettingsKeys.LYRIC_BLUR_AMOUNT] ?: 3f }
 
     val lyricFontScaleFlow: Flow<Float> =
         context.dataStore.data.map { it[SettingsKeys.LYRIC_FONT_SCALE] ?: 1.0f }
@@ -151,6 +156,9 @@ class SettingsRepository(private val context: Context) {
 
     val sleepTimerMinutesFlow: Flow<Long> =
         context.dataStore.data.map { it[SettingsKeys.SLEEP_TIMER_MINUTES] ?: 30L }
+
+    val showLyricTranslationFlow: Flow<Boolean> =
+        context.dataStore.data.map { it[SettingsKeys.SHOW_LYRIC_TRANSLATION] ?: true }
 
     suspend fun setDynamicColor(value: Boolean) {
         context.dataStore.edit { it[SettingsKeys.DYNAMIC_COLOR] = value }
@@ -226,6 +234,10 @@ class SettingsRepository(private val context: Context) {
         context.dataStore.edit { it[SettingsKeys.LYRIC_BLUR_ENABLED] = enabled }
     }
 
+    suspend fun setLyricBlurAmount(amount: Float) {
+        context.dataStore.edit { it[SettingsKeys.LYRIC_BLUR_AMOUNT] = amount }
+    }
+
     suspend fun setLyricFontScale(scale: Float) {
         context.dataStore.edit { it[SettingsKeys.LYRIC_FONT_SCALE] = scale }
     }
@@ -274,6 +286,10 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setSleepTimerMinutes(minutes: Long) {
         context.dataStore.edit { it[SettingsKeys.SLEEP_TIMER_MINUTES] = minutes }
+    }
+
+    suspend fun setShowLyricTranslation(enabled: Boolean) {
+        context.dataStore.edit { it[SettingsKeys.SHOW_LYRIC_TRANSLATION] = enabled }
     }
 
     /** 备用：一次性读取（非 Compose 场景） */

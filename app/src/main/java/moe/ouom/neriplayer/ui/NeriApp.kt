@@ -1,4 +1,4 @@
-package moe.ouom.neriplayer.ui
+﻿package moe.ouom.neriplayer.ui
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -116,6 +116,7 @@ import moe.ouom.neriplayer.ui.screen.NowPlayingScreen
 import moe.ouom.neriplayer.ui.screen.debug.BiliApiProbeScreen
 import moe.ouom.neriplayer.ui.screen.debug.DebugHomeScreen
 import moe.ouom.neriplayer.ui.screen.debug.LogListScreen
+import moe.ouom.neriplayer.ui.screen.debug.CrashLogListScreen
 import moe.ouom.neriplayer.ui.screen.debug.NeteaseApiProbeScreen
 import moe.ouom.neriplayer.ui.screen.debug.SearchApiProbeScreen
 import moe.ouom.neriplayer.ui.screen.host.ExploreHostScreen
@@ -140,6 +141,7 @@ import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import moe.ouom.neriplayer.ui.screen.RecentScreen
+import moe.ouom.neriplayer.R
 
 private fun adjustAccent(base: Color, isDark: Boolean): Color {
     val r = (base.red * 255).toInt().coerceIn(0, 255)
@@ -267,6 +269,7 @@ fun NeriApp(
     val themeSeedColor by repo.themeSeedColorFlow.collectAsState(initial = ThemeDefaults.DEFAULT_SEED_COLOR_HEX)
     val themeColorPalette by repo.themeColorPaletteFlow.collectAsState(initial = ThemeDefaults.PRESET_COLORS)
     val lyricBlurEnabled by repo.lyricBlurEnabledFlow.collectAsState(initial = true)
+    val lyricBlurAmount by repo.lyricBlurAmountFlow.collectAsState(initial = 10f)
     val lyricFontScale by repo.lyricFontScaleFlow.collectAsState(initial = 1.0f)
     val uiDensityScale by repo.uiDensityScaleFlow.collectAsState(initial = 1.0f)
     val bypassProxy by repo.bypassProxyFlow.collectAsState(initial = true)
@@ -274,6 +277,7 @@ fun NeriApp(
     val backgroundImageBlur by repo.backgroundImageBlurFlow.collectAsState(initial = 10f)
     val backgroundImageAlpha by repo.backgroundImageAlphaFlow.collectAsState(initial = 0.3f)
     val hapticFeedbackEnabled by repo.hapticFeedbackEnabledFlow.collectAsState(initial = true)
+    val showLyricTranslation by repo.showLyricTranslationFlow.collectAsState(initial = true)
     val maxCacheSizeBytes by repo.maxCacheSizeBytesFlow.collectAsState(initial = 1024L * 1024 * 1024)
     val hazeState = remember { HazeState() }
 
@@ -346,8 +350,11 @@ fun NeriApp(
         else -> false
     }
     LaunchedEffect(Unit) {
-        // 在已有播放队列时同步到前台服务
-        NPLogger.d("NERI-App", "Checking PlayerManager items")
+        // 确保 PlayerManager 使用正确的缓存大小初始化
+        // 由于 initialize() 是幂等的，如果已经初始化过，这个调用不会改变设置
+        val cacheSize = repo.maxCacheSizeBytesFlow.first()
+        PlayerManager.initialize(context.applicationContext as Application, cacheSize)
+        NPLogger.d("NERI-App", "PlayerManager.initialize called")
         NPLogger.d("PlayerManager.hasItems()", PlayerManager.hasItems().toString())
         if (PlayerManager.hasItems()) {
             ContextCompat.startForegroundService(
@@ -855,6 +862,10 @@ fun NeriApp(
                                         onLyricBlurEnabledChange = { enabled ->
                                             scope.launch { repo.setLyricBlurEnabled(enabled) }
                                         },
+                                        lyricBlurAmount = lyricBlurAmount,
+                                        onLyricBlurAmountChange = { amount ->
+                                            scope.launch { repo.setLyricBlurAmount(amount) }
+                                        },
                                         lyricFontScale = lyricFontScale,
                                         onLyricFontScaleChange = { scale ->
                                             scope.launch { repo.setLyricFontScale(scale) }
@@ -886,11 +897,20 @@ fun NeriApp(
                                                 syncHapticFeedbackSetting(enabled)
                                             }
                                         },
+                                        showLyricTranslation = showLyricTranslation,
+                                        onShowLyricTranslationChange = { enabled ->
+                                            scope.launch { repo.setShowLyricTranslation(enabled) }
+                                        },
                                         maxCacheSizeBytes = maxCacheSizeBytes,
                                         onMaxCacheSizeBytesChange = { size ->
                                             scope.launch { repo.setMaxCacheSizeBytes(size) }
                                         },
-                                        onClearCacheClick = { PlayerManager.clearCache() }
+                                        onClearCacheClick = { clearAudio, clearImage ->
+                                            scope.launch {
+                                                val (success, message) = PlayerManager.clearCache(clearAudio, clearImage)
+                                                snackbarHostState.showSnackbar(message)
+                                            }
+                                        }
                                     )
                                 }
 
@@ -948,9 +968,10 @@ fun NeriApp(
                                         onOpenNeteaseDebug = { navController.navigate(Destinations.DebugNetease.route) },
                                         onOpenSearchDebug = { navController.navigate(Destinations.DebugSearch.route) },
                                         onOpenLogs = { navController.navigate(Destinations.DebugLogsList.route) },
+                                        onOpenCrashLogs = { navController.navigate(Destinations.DebugCrashLogsList.route) },
                                         onTestExceptionHandler = {
                                             ExceptionHandler.safeExecute("DebugTest") {
-                                                throw RuntimeException("这是一个测试异常，用于验证异常处理器的功能")
+                                                throw RuntimeException(context.getString(R.string.test_exception_message))
                                             }
                                         },
                                         onHideDebugMode = {
@@ -967,6 +988,17 @@ fun NeriApp(
                                 composable(Destinations.DebugSearch.route) { SearchApiProbeScreen() }
                                 composable(Destinations.DebugLogsList.route) {
                                     LogListScreen(
+                                        onBack = { navController.popBackStack() },
+                                        onLogFileClick = { filePath ->
+                                            navController.navigate(
+                                                Destinations.DebugLogViewer.createRoute(filePath)
+                                            )
+                                        }
+                                    )
+                                }
+
+                                composable(Destinations.DebugCrashLogsList.route) {
+                                    CrashLogListScreen(
                                         onBack = { navController.popBackStack() },
                                         onLogFileClick = { filePath ->
                                             navController.navigate(
@@ -1007,7 +1039,7 @@ fun NeriApp(
                                 )
                             ) {
                                 NeriMiniPlayer(
-                                    title = currentSong?.name ?: "暂无播放",
+                                    title = currentSong?.name ?: context.getString(R.string.nowplaying_no_playback),
                                     artist = currentSong?.artist ?: "",
                                     coverUrl = currentSong?.coverUrl,
                                     isPlaying = isPlaying,
@@ -1068,10 +1100,12 @@ fun NeriApp(
                                     navController.navigate("netease_album_detail/$json")
                                 },
                                 lyricBlurEnabled = lyricBlurEnabled,
+                                lyricBlurAmount = lyricBlurAmount,
                                 lyricFontScale = lyricFontScale,
                                 onLyricFontScaleChange = { scale ->
                                     scope.launch { repo.setLyricFontScale(scale) }
-                                }
+                                },
+                                showLyricTranslation = showLyricTranslation
                             )
                         }
                     }

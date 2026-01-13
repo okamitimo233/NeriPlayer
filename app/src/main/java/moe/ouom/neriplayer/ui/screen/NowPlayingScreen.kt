@@ -1,4 +1,4 @@
-package moe.ouom.neriplayer.ui.screen
+﻿package moe.ouom.neriplayer.ui.screen
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -29,8 +29,15 @@ import android.content.res.Configuration
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.widget.Toast
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.BoundsTransform
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.animation.SharedTransitionLayout
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -44,9 +51,13 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,6 +82,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.activity.compose.BackHandler
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.PlaylistAdd
 import androidx.compose.material.icons.automirrored.outlined.QueueMusic
@@ -82,6 +94,7 @@ import androidx.compose.material.icons.filled.RepeatOne
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SpeakerGroup
 import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.FormatSize
 import androidx.compose.material.icons.outlined.LibraryMusic
@@ -89,13 +102,13 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shuffle
 import androidx.compose.material.icons.outlined.SkipNext
 import androidx.compose.material.icons.outlined.SkipPrevious
 import androidx.compose.material.icons.outlined.Timer
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -112,7 +125,6 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -133,17 +145,25 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.rememberNavController
 import androidx.media3.common.Player
@@ -153,6 +173,7 @@ import kotlinx.coroutines.launch
 import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.util.offlineCachedImageRequest
 import moe.ouom.neriplayer.core.api.search.MusicPlatform
+import moe.ouom.neriplayer.core.api.search.SongSearchInfo
 import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.AudioDownloadManager
 import moe.ouom.neriplayer.core.player.PlayerManager
@@ -170,20 +191,22 @@ import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.util.HapticFilledIconButton
 import moe.ouom.neriplayer.util.HapticIconButton
 import moe.ouom.neriplayer.util.HapticTextButton
+import moe.ouom.neriplayer.util.NPLogger
+import moe.ouom.neriplayer.util.SearchManager
 import moe.ouom.neriplayer.util.formatDuration
 import kotlin.math.roundToInt
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalSharedTransitionApi::class)
 @Composable
 fun NowPlayingScreen(
     onNavigateUp: () -> Unit,
     onEnterAlbum: (NeteaseAlbum) -> Unit,
     lyricBlurEnabled: Boolean,
+    lyricBlurAmount: Float,
     lyricFontScale: Float,
     onLyricFontScaleChange: (Float) -> Unit,
+    showLyricTranslation: Boolean = true,
 ) {
-    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-
     val currentSong by PlayerManager.currentSongFlow.collectAsState()
     val isPlaying by PlayerManager.isPlayingFlow.collectAsState()
     val shuffleEnabled by PlayerManager.shuffleModeFlow.collectAsState()
@@ -202,12 +225,13 @@ fun NowPlayingScreen(
 
     // 点击即切换，回流后撤销覆盖
     var favOverride by remember(currentSong) { mutableStateOf<Boolean?>(null) }
-    val isFavoriteComputed = remember(currentSong, playlists) {
+    val favoritePlaylistName = stringResource(R.string.favorite_my_music)
+    val isFavoriteComputed = remember(currentSong, playlists, favoritePlaylistName) {
         val song = currentSong
         if (song == null) {
             false
         } else {
-            val fav = playlists.firstOrNull { it.name == "我喜欢的音乐" }
+            val fav = playlists.firstOrNull { it.name == "我喜欢的音乐" || it.name == "My Favorite Music" }
             fav?.songs?.any { it.id == song.id && it.album == song.album } == true
         }
     }
@@ -232,11 +256,15 @@ fun NowPlayingScreen(
     var showQueueSheet by remember { mutableStateOf(false) }
     var showLyricsScreen by remember { mutableStateOf(false) }
     var showSleepTimerDialog by remember { mutableStateOf(false) }
+    var showSongNameMenu by remember { mutableStateOf(false) }
+    var showArtistMenu by remember { mutableStateOf(false) }
     val addSheetState = rememberModalBottomSheetState()
     val queueSheetState = rememberModalBottomSheetState()
 
     // Snackbar状态
     val snackbarHostState = remember { SnackbarHostState() }
+
+    val clipboardManager = LocalClipboardManager.current
 
     // 是否拖拽进度条
     var isUserDraggingSlider by remember(currentSong?.id) { mutableStateOf(false) }
@@ -256,7 +284,7 @@ fun NowPlayingScreen(
 
     val nowPlayingViewModel: NowPlayingViewModel = viewModel()
 
-    LaunchedEffect(currentSong?.id, currentSong?.matchedLyric, isFromNetease) {
+    LaunchedEffect(currentSong?.id, currentSong?.matchedLyric, currentSong?.matchedTranslatedLyric, isFromNetease) {
         val song = currentSong
         lyrics = when {
             // 优先使用匹配到的歌词
@@ -278,7 +306,16 @@ fun NowPlayingScreen(
 
         // 同步尝试拉取翻译（仅云音乐有）
         translatedLyrics = try {
-            if (song != null) PlayerManager.getTranslatedLyrics(song) else emptyList()
+            when {
+                // 优先使用存储的翻译歌词
+                song?.matchedTranslatedLyric != null -> {
+                    parseNeteaseLrc(song.matchedTranslatedLyric)
+                }
+                song != null -> {
+                    PlayerManager.getTranslatedLyrics(song)
+                }
+                else -> emptyList()
+            }
         } catch (_: Exception) {
             emptyList()
         }
@@ -302,49 +339,37 @@ fun NowPlayingScreen(
     val totalOffset = platformOffset + userOffset
 
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-        AnimatedContent(
-            targetState = showLyricsScreen,
-            transitionSpec = {
-                slideInHorizontally(
-                    initialOffsetX = { if (targetState) it else -it },
-                    animationSpec = spring(
-                        dampingRatio = 0.85f,
-                        stiffness = 380f
-                    )
-                ) + fadeIn(
-                    animationSpec = spring(
-                        dampingRatio = 0.85f,
-                        stiffness = 380f
-                    )
-                ) togetherWith slideOutHorizontally(
-                    targetOffsetX = { if (targetState) -it else it },
-                    animationSpec = spring(
-                        dampingRatio = 0.85f,
-                        stiffness = 380f
-                    )
-                ) + fadeOut(
-                    animationSpec = spring(
-                        dampingRatio = 0.85f,
-                        stiffness = 380f
-                    )
-                )
-            },
-            label = "lyrics_transition"
-        ) { isLyricsMode ->
-            if (isLyricsMode) {
-                // 歌词全屏页面
-                LyricsScreen(
-                    lyrics = lyrics,
-                    lyricBlurEnabled = lyricBlurEnabled,
-                    lyricFontScale = lyricFontScale,
-                    onEnterAlbum = onEnterAlbum,
-                    onLyricFontScaleChange = onLyricFontScaleChange,
-                    onNavigateBack = { showLyricsScreen = false },
-                    onSeekTo = { position -> PlayerManager.seekTo(position) },
-                    translatedLyrics = translatedLyrics,
-                    lyricOffsetMs = totalOffset
-                )
-            } else {
+        SharedTransitionLayout {
+            Box(modifier = Modifier.fillMaxSize()) {
+                AnimatedContent(
+                    targetState = showLyricsScreen,
+                    transitionSpec = {
+                        fadeIn(
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        ) togetherWith fadeOut(
+                            animationSpec = tween(durationMillis = 300, easing = LinearEasing)
+                        )
+                    },
+                    label = "lyrics_transition"
+                ) { isLyricsMode ->
+                    if (isLyricsMode) {
+                        // 歌词全屏页面
+                        LyricsScreen(
+                            lyrics = lyrics,
+                            lyricBlurEnabled = lyricBlurEnabled,
+                            lyricBlurAmount = lyricBlurAmount,
+                            lyricFontScale = lyricFontScale,
+                            onEnterAlbum = onEnterAlbum,
+                            onLyricFontScaleChange = onLyricFontScaleChange,
+                            onNavigateBack = { showLyricsScreen = false },
+                            onSeekTo = { position -> PlayerManager.seekTo(position) },
+                            translatedLyrics = translatedLyrics,
+                            lyricOffsetMs = totalOffset,
+                            showLyricTranslation = showLyricTranslation,
+                            sharedTransitionScope = this@SharedTransitionLayout,
+                            animatedContentScope = this@AnimatedContent
+                        )
+                    } else {
                 // 播放页面
                 var contentModifier = Modifier
                     .fillMaxSize()
@@ -366,45 +391,74 @@ fun NowPlayingScreen(
 
                 // 主列内容
                 val mainColumnContent: @Composable ColumnScope.() -> Unit = {
-                    CenterAlignedTopAppBar(
-                        title = { Text("正在播放") },
-                        navigationIcon = {
-                            HapticIconButton(onClick = onNavigateUp) {
-                                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "返回")
-                            }
-                        },
-                        actions = {
-                            HapticIconButton(onClick = {
-                                if (currentSong == null) return@HapticIconButton
-                                val willFav = !isFavorite
-                                favOverride = willFav
-                                if (willFav) PlayerManager.addCurrentToFavorites() else PlayerManager.removeCurrentFromFavorites()
-                                bumpKey++
-                            }) {
-                                AnimatedContent(
-                                    targetState = isFavorite,
-                                    transitionSpec = {
-                                        (scaleIn(animationSpec = tween(160), initialScale = 0.85f) + fadeIn()) togetherWith
-                                                (scaleOut(animationSpec = tween(140), targetScale = 0.85f) + fadeOut())
-                                    },
-                                    label = "favorite_icon_anim"
-                                ) { fav ->
-                                    Icon(
-                                        imageVector = if (fav) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                        contentDescription = if (fav) "已收藏" else "收藏",
-                                        tint = if (fav) Color.Red else LocalContentColor.current,
-                                        modifier = Modifier.graphicsLayer {
-                                            val s = if (bumpKey == 0) 1f else scale
-                                            scaleX = s
-                                            scaleY = s
-                                        }
-                                    )
-                                }
+                    // 顶部栏
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(56.dp)
+                    ) {
+                        // 返回按钮 - 左侧
+                        HapticIconButton(
+                            onClick = onNavigateUp,
+                            modifier = Modifier.align(Alignment.CenterStart)
+                                .size(48.dp)
+                                .sharedBounds(
+                                    rememberSharedContentState(key = "btn_back"),
+                                    animatedVisibilityScope = this@AnimatedContent,
+                                    enter = EnterTransition.None,
+                                    exit = ExitTransition.None,
+                                ).zIndex(1f)
+                        ) {
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = stringResource(R.string.action_back))
+                        }
+
+                        // 标题 - 居中
+                        Text(
+                            text = stringResource(R.string.player_now_playing),
+                            style = MaterialTheme.typography.titleLarge,
+                            modifier = Modifier.align(Alignment.Center)
+                        )
+
+                        // 收藏和更多按钮 - 右侧
+                        Row(
+                            modifier = Modifier.align(Alignment.CenterEnd)
+                        ) {
+                            HapticIconButton(
+                                onClick = {
+                                    if (currentSong == null) return@HapticIconButton
+                                    val willFav = !isFavorite
+                                    favOverride = willFav
+                                    if (willFav) PlayerManager.addCurrentToFavorites() else PlayerManager.removeCurrentFromFavorites()
+                                },
+                                modifier = Modifier.size(48.dp)
+                                    .sharedBounds(
+                                        rememberSharedContentState(key = "btn_favorite"),
+                                        animatedVisibilityScope = this@AnimatedContent,
+                                        enter = EnterTransition.None,
+                                        exit = ExitTransition.None,
+                                    ).zIndex(1f)
+                            ) {
+                                Icon(
+                                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                                    contentDescription = if (isFavorite) stringResource(R.string.nowplaying_favorited) else stringResource(R.string.nowplaying_favorite),
+                                    tint = if (isFavorite) Color.Red else MaterialTheme.colorScheme.onSurface
+                                )
                             }
 
+                            Spacer(modifier = Modifier.width(6.dp))
+
                             var showMoreOptions by remember { mutableStateOf(false) }
-                            HapticIconButton(onClick = { showMoreOptions = true }) {
-                                Icon(Icons.Default.MoreVert, contentDescription = "更多选项")
+                            HapticIconButton(
+                                onClick = { showMoreOptions = true },
+                                modifier = Modifier.size(48.dp)
+                                    .sharedBounds(
+                                        rememberSharedContentState(key = "btn_more"),
+                                        animatedVisibilityScope = this@AnimatedContent,
+                                        enter = EnterTransition.None,
+                                        exit = ExitTransition.None,
+                                    ).zIndex(1f)
+                            ) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.nowplaying_more_options))
                             }
                             if (showMoreOptions && currentSong != null) {
                                 MoreOptionsSheet(
@@ -419,97 +473,84 @@ fun NowPlayingScreen(
                                     onLyricFontScaleChange = onLyricFontScaleChange
                                 )
                             }
-                        },
-                        scrollBehavior = scrollBehavior,
-                        colors = TopAppBarDefaults.topAppBarColors(
-                            containerColor = Color.Transparent,
-                            scrolledContainerColor = Color.Transparent,
-                            navigationIconContentColor = MaterialTheme.colorScheme.onSurface,
-                            titleContentColor = MaterialTheme.colorScheme.onSurface,
-                            actionIconContentColor = MaterialTheme.colorScheme.onSurface
-                        )
-                    )
+                        }
+                    }
 
                     Spacer(Modifier.height(8.dp))
 
                     // 封面
-                    AnimatedVisibility(
-                        visible = contentVisible,
-                        modifier = Modifier.align(Alignment.CenterHorizontally),
-                        enter = slideInVertically(
-                            animationSpec = tween(durationMillis = 400, delayMillis = 100),
-                            initialOffsetY = { it / 5 }
-                        ) + fadeIn(animationSpec = tween(durationMillis = 400, delayMillis = 100))
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .size(240.dp)
+                            .sharedElement(
+                                rememberSharedContentState(key = "cover_image"),
+                                animatedVisibilityScope = this@AnimatedContent
+                            )
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(
+                                color = if ((currentSong?.customCoverUrl ?: currentSong?.coverUrl) != null) Color.Transparent else MaterialTheme.colorScheme.primaryContainer
+                            )
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .size(240.dp)
-                                .background(
-                                    color = if (currentSong?.coverUrl != null) Color.Transparent else MaterialTheme.colorScheme.primaryContainer,
-                                    shape = RoundedCornerShape(24.dp)
+                        val displayCoverUrl = currentSong?.customCoverUrl ?: currentSong?.coverUrl
+                        displayCoverUrl?.let { cover ->
+                            val context = LocalContext.current
+                            AsyncImage(
+                                model = offlineCachedImageRequest(context, cover),
+                                contentDescription = currentSong?.customName ?: currentSong?.name ?: "",
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        // 右下角来源徽标
+                        if (isFromNetease) {
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(10.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_netease_cloud_music),
+                                    contentDescription = stringResource(R.string.cd_netease),
+                                    tint = LocalContentColor.current,
+                                    modifier = Modifier.size(16.dp)
                                 )
-                        ) {
-                            currentSong?.coverUrl?.let { cover ->
-                                val context = LocalContext.current
-                                AsyncImage(
-                                    model = offlineCachedImageRequest(context, cover),
-                                    contentDescription = currentSong?.name ?: "",
-                                    contentScale = ContentScale.Crop,
-                                    modifier = Modifier
-                                        .matchParentSize()
-                                        .clip(RoundedCornerShape(24.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.nowplaying_netease_cloud),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
+                        }
 
-                            // 右下角来源徽标
-                            if (isFromNetease) {
-                                Row(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(10.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_netease_cloud_music),
-                                        contentDescription = "网易云音乐",
-                                        tint = LocalContentColor.current,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "网易云",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
-                            }
-
-                            if (isFromBili) {
-                                Row(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(10.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
-                                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        painter = painterResource(id = R.drawable.ic_bilibili),
-                                        contentDescription = "哔哩哔哩",
-                                        tint = LocalContentColor.current,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "哔哩哔哩",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                }
+                        if (isFromBili) {
+                            Row(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(10.dp)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    painter = painterResource(id = R.drawable.ic_bilibili),
+                                    contentDescription = stringResource(R.string.cd_bilibili),
+                                    tint = LocalContentColor.current,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = stringResource(R.string.nowplaying_bilibili),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
                             }
                         }
                     }
@@ -526,12 +567,65 @@ fun NowPlayingScreen(
                         ) + fadeIn(animationSpec = tween(durationMillis = 400, delayMillis = 150))
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(currentSong?.name ?: "", style = MaterialTheme.typography.headlineSmall)
-                            Text(
-                                currentSong?.artist ?: "",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Box {
+                                Text(
+                                    text = currentSong?.customName ?: currentSong?.name ?: "",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .combinedClickable(
+                                            onClick = {},
+                                            onLongClick = { showSongNameMenu = true }
+                                        )
+                                )
+                                DropdownMenu(
+                                    expanded = showSongNameMenu,
+                                    onDismissRequest = { showSongNameMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_copy_song_name)) },
+                                        onClick = {
+                                            val displayName = currentSong?.customName ?: currentSong?.name
+                                            displayName?.let { clipboardManager.setText(AnnotatedString(it)) }
+                                            showSongNameMenu = false
+                                        }
+                                    )
+                                }
+                            }
+                            Box {
+                                Text(
+                                    text = currentSong?.customArtist ?: currentSong?.artist ?: "",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .sharedElement(
+                                            rememberSharedContentState(key = "song_artist"),
+                                            animatedVisibilityScope = this@AnimatedContent
+                                        )
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .combinedClickable(
+                                            onClick = {},
+                                            onLongClick = { showArtistMenu = true }
+                                        )
+                                )
+                                DropdownMenu(
+                                    expanded = showArtistMenu,
+                                    onDismissRequest = { showArtistMenu = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_copy_artist)) },
+                                        onClick = {
+                                            val displayArtist = currentSong?.customArtist ?: currentSong?.artist
+                                            displayArtist?.let { clipboardManager.setText(AnnotatedString(it)) }
+                                            showArtistMenu = false
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -539,7 +633,12 @@ fun NowPlayingScreen(
 
                     // 进度条
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .sharedBounds(
+                                rememberSharedContentState(key = "progress_bar"),
+                                animatedVisibilityScope = this@AnimatedContent
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -577,18 +676,37 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.spacedBy(20.dp),
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) {
-                        HapticIconButton(onClick = { PlayerManager.setShuffle(!shuffleEnabled) }) {
+                        HapticIconButton(onClick = { PlayerManager.setShuffle(!shuffleEnabled) },
+                            modifier = Modifier
+                                .size(42.dp)
+                        ) {
                             Icon(
                                 Icons.Outlined.Shuffle,
-                                contentDescription = "随机",
+                                contentDescription = stringResource(R.string.player_shuffle),
                                 tint = if (shuffleEnabled) MaterialTheme.colorScheme.primary else LocalContentColor.current
                             )
                         }
-                        HapticIconButton(onClick = { PlayerManager.previous() }) {
-                            Icon(Icons.Outlined.SkipPrevious, contentDescription = "上一首")
+
+                        HapticIconButton(onClick = { PlayerManager.previous() },
+                            modifier = Modifier
+                            .sharedElement(
+                                rememberSharedContentState(key = "player_previous"),
+                                animatedVisibilityScope = this@AnimatedContent
+                            )
+                            .size(42.dp)
+                        ) {
+                            Icon(Icons.Outlined.SkipPrevious, contentDescription = stringResource(R.string.player_previous))
                         }
 
-                        HapticFilledIconButton(onClick = { PlayerManager.togglePlayPause() }) {
+                        HapticFilledIconButton(
+                            onClick = { PlayerManager.togglePlayPause() },
+                            modifier = Modifier
+                                .sharedElement(
+                                    rememberSharedContentState(key = "play_button"),
+                                    animatedVisibilityScope = this@AnimatedContent
+                                )
+                                .size(42.dp)
+                        ) {
                             AnimatedContent(
                                 targetState = isPlaying,
                                 label = "play_pause_icon",
@@ -596,17 +714,27 @@ fun NowPlayingScreen(
                             ) { currentlyPlaying ->
                                 Icon(
                                     imageVector = if (currentlyPlaying) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                                    contentDescription = if (currentlyPlaying) "暂停" else "播放"
+                                    contentDescription = if (currentlyPlaying) stringResource(R.string.player_pause) else stringResource(R.string.player_play)
                                 )
                             }
                         }
-                        HapticIconButton(onClick = { PlayerManager.next() }) {
-                            Icon(Icons.Outlined.SkipNext, contentDescription = "下一首")
+                        HapticIconButton(onClick = { PlayerManager.next() },
+                            modifier = Modifier
+                            .sharedElement(
+                                rememberSharedContentState(key = "player_next"),
+                                animatedVisibilityScope = this@AnimatedContent
+                            )
+                            .size(42.dp)
+                        ) {
+                            Icon(Icons.Outlined.SkipNext, contentDescription = stringResource(R.string.player_next))
                         }
-                        HapticIconButton(onClick = { PlayerManager.cycleRepeatMode() }) {
+                        HapticIconButton(onClick = { PlayerManager.cycleRepeatMode() },
+                            modifier = Modifier
+                                .size(42.dp)
+                        ) {
                             Icon(
                                 imageVector = if (repeatMode == Player.REPEAT_MODE_ONE) Icons.Filled.RepeatOne else Icons.Outlined.Repeat,
-                                contentDescription = "循环",
+                                contentDescription = stringResource(R.string.player_repeat),
                                 tint = if (repeatMode != Player.REPEAT_MODE_OFF) MaterialTheme.colorScheme.primary else LocalContentColor.current
                             )
                         }
@@ -628,8 +756,9 @@ fun NowPlayingScreen(
                             visualSpec = LyricVisualSpec(),
                             lyricOffsetMs = totalOffset,
                             lyricBlurEnabled = lyricBlurEnabled,
+                            lyricBlurAmount = lyricBlurAmount,
                             onLyricClick = { entry -> PlayerManager.seekTo(entry.startTimeMs) },
-                            translatedLyrics = translatedLyrics
+                            translatedLyrics = if (showLyricTranslation) translatedLyrics else null
                         )
                     }
 
@@ -645,19 +774,34 @@ fun NowPlayingScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        HapticIconButton(onClick = { showQueueSheet = true }) {
+                        // 播放队列
+                        HapticIconButton(onClick = { showQueueSheet = true },
+                            modifier = Modifier
+                                .sharedBounds(
+                                    rememberSharedContentState(key = "btn_queue"),
+                                    animatedVisibilityScope = this@AnimatedContent,
+                                    enter = EnterTransition.None,
+                                    exit = ExitTransition.None,
+                                ).zIndex(1f)) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.QueueMusic,
-                                contentDescription = "播放列表",
+                                contentDescription = stringResource(R.string.playlist_queue),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
 
                         // 定时器按钮
-                        HapticIconButton(onClick = { showSleepTimerDialog = true }) {
+                        HapticIconButton(onClick = { showSleepTimerDialog = true },
+                            modifier = Modifier
+                            .sharedBounds(
+                                rememberSharedContentState(key = "btn_timer"),
+                                animatedVisibilityScope = this@AnimatedContent,
+                                enter = EnterTransition.None,
+                                exit = ExitTransition.None,
+                            ).zIndex(1f)) {
                             Icon(
                                 Icons.Outlined.Timer,
-                                contentDescription = "定时器",
+                                contentDescription = stringResource(R.string.sleep_timer_short),
                                 tint = if (sleepTimerState.isActive) MaterialTheme.colorScheme.primary else LocalContentColor.current,
                                 modifier = Modifier.size(20.dp)
                             )
@@ -665,7 +809,15 @@ fun NowPlayingScreen(
 
                         // 音量按钮（根据设备显示不同图标，居中）
                         val audioDeviceInfo = rememberAudioDeviceInfo()
-                        HapticIconButton(onClick = { showVolumeSheet = true }) {
+                        HapticIconButton(onClick = { showVolumeSheet = true },
+                            modifier = Modifier
+                            .sharedBounds(
+                                rememberSharedContentState(key = "btn_volume"),
+                                animatedVisibilityScope = this@AnimatedContent,
+                                enter = EnterTransition.None,
+                                exit = ExitTransition.None,
+                            ).zIndex(1f)
+                        ) {
                             Icon(
                                 audioDeviceInfo.second,
                                 contentDescription = audioDeviceInfo.first,
@@ -673,21 +825,25 @@ fun NowPlayingScreen(
                             )
                         }
 
-                        // 歌词按钮（有动画）
+                        // 歌词按钮
                         HapticIconButton(
                             onClick = { showLyricsScreen = !showLyricsScreen },
-                            enabled = lyrics.isNotEmpty()
+                            enabled = lyrics.isNotEmpty(),
+                            modifier = Modifier
+                                .sharedBounds(
+                                    rememberSharedContentState(key = "btn_lyrics"),
+                                    animatedVisibilityScope = this@AnimatedContent,
+                                    enter = EnterTransition.None,
+                                    exit = ExitTransition.None,
+                                ).zIndex(1f)
                         ) {
                             AnimatedContent(
                                 targetState = showLyricsScreen,
-                                transitionSpec = {
-                                    (scaleIn() + fadeIn()) togetherWith (scaleOut() + fadeOut())
-                                },
                                 label = "lyrics_icon"
                             ) { isShowingLyrics ->
                                 Icon(
                                     imageVector = if (isShowingLyrics) Icons.Outlined.LibraryMusic else Icons.Outlined.LibraryMusic,
-                                    contentDescription = "歌词",
+                                    contentDescription = stringResource(R.string.lyrics_title),
                                     tint = if (lyrics.isEmpty()) {
                                         LocalContentColor.current.copy(alpha = 0.38f)
                                     } else if (isShowingLyrics) {
@@ -700,10 +856,19 @@ fun NowPlayingScreen(
                             }
                         }
 
-                        HapticIconButton(onClick = { showAddSheet = true }) {
+                        // 添加到歌单
+                        HapticIconButton(onClick = { showAddSheet = true },
+                            modifier = Modifier
+                                .sharedBounds(
+                                    rememberSharedContentState(key = "btn_add"),
+                                    animatedVisibilityScope = this@AnimatedContent,
+                                    enter = EnterTransition.None,
+                                    exit = ExitTransition.None,
+                                ).zIndex(1f)
+                        ) {
                             Icon(
                                 Icons.AutoMirrored.Outlined.PlaylistAdd,
-                                contentDescription = "添加到歌单",
+                                contentDescription = stringResource(R.string.playlist_add_to),
                                 modifier = Modifier.size(20.dp)
                             )
                         }
@@ -736,8 +901,9 @@ fun NowPlayingScreen(
                                 visualSpec = LyricVisualSpec(),
                                 lyricOffsetMs = totalOffset,
                                 lyricBlurEnabled = lyricBlurEnabled,
+                                lyricBlurAmount = lyricBlurAmount,
                                 onLyricClick = { entry -> PlayerManager.seekTo(entry.startTimeMs) },
-                                translatedLyrics = translatedLyrics
+                                translatedLyrics = if (showLyricTranslation) translatedLyrics else null
                             )
                         } else {
                             Spacer(
@@ -828,7 +994,7 @@ fun NowPlayingScreen(
                                         IconButton(onClick = { showMoreMenu = true }) {
                                             Icon(
                                                 Icons.Filled.MoreVert,
-                                                contentDescription = "更多操作",
+                                                contentDescription = stringResource(R.string.common_more_actions),
                                                 tint = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
@@ -838,14 +1004,14 @@ fun NowPlayingScreen(
                                             onDismissRequest = { showMoreMenu = false }
                                         ) {
                                             DropdownMenuItem(
-                                                text = { Text("接下来播放...") },
+                                                text = { Text(stringResource(R.string.playlist_add_to_queue)) },
                                                 onClick = {
                                                     PlayerManager.addToQueueNext(song)
                                                     showMoreMenu = false
                                                 }
                                             )
                                             DropdownMenuItem(
-                                                text = { Text("添加到播放队列末尾") },
+                                                text = { Text(stringResource(R.string.playlist_add_to_end)) },
                                                 onClick = {
                                                     PlayerManager.addToQueueEnd(song)
                                                     showMoreMenu = false
@@ -880,7 +1046,7 @@ fun NowPlayingScreen(
                             ) {
                                 Text(pl.name, style = MaterialTheme.typography.bodyLarge)
                                 Spacer(modifier = Modifier.weight(1f))
-                                Text("${pl.songs.size} 首", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.nowplaying_song_count_format, pl.songs.size), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
@@ -897,20 +1063,22 @@ fun NowPlayingScreen(
         }
     }
 }
+}
+}
 
 @Composable
-private fun rememberAudioDeviceInfo(): Pair<String, ImageVector> {
+fun rememberAudioDeviceInfo(): Pair<String, ImageVector> {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
-    var deviceInfo by remember { mutableStateOf(getCurrentAudioDevice(audioManager)) }
+    var deviceInfo by remember { mutableStateOf(getCurrentAudioDevice(audioManager, context)) }
 
     DisposableEffect(Unit) {
         val deviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-                deviceInfo = getCurrentAudioDevice(audioManager)
+                deviceInfo = getCurrentAudioDevice(audioManager, context)
             }
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-                deviceInfo = getCurrentAudioDevice(audioManager)
+                deviceInfo = getCurrentAudioDevice(audioManager, context)
             }
         }
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
@@ -921,19 +1089,19 @@ private fun rememberAudioDeviceInfo(): Pair<String, ImageVector> {
 }
 
 @Composable
-private fun AudioDeviceHandler() {
+fun AudioDeviceHandler() {
     val context = LocalContext.current
     val audioManager = remember { context.getSystemService(Context.AUDIO_SERVICE) as AudioManager }
 
-    var deviceInfo by remember { mutableStateOf(getCurrentAudioDevice(audioManager)) }
+    var deviceInfo by remember { mutableStateOf(getCurrentAudioDevice(audioManager, context)) }
 
     DisposableEffect(Unit) {
         val deviceCallback = object : AudioDeviceCallback() {
             override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
-                deviceInfo = getCurrentAudioDevice(audioManager)
+                deviceInfo = getCurrentAudioDevice(audioManager, context)
             }
             override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
-                deviceInfo = getCurrentAudioDevice(audioManager)
+                deviceInfo = getCurrentAudioDevice(audioManager, context)
             }
         }
         audioManager.registerAudioDeviceCallback(deviceCallback, null)
@@ -944,7 +1112,7 @@ private fun AudioDeviceHandler() {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 imageVector = deviceInfo.second,
-                contentDescription = "播放设备",
+                contentDescription = stringResource(R.string.cd_audio_device),
                 modifier = Modifier.size(16.dp),
                 tint = MaterialTheme.colorScheme.onSurface
             )
@@ -958,20 +1126,20 @@ private fun AudioDeviceHandler() {
     }
 }
 
-private fun getCurrentAudioDevice(audioManager: AudioManager): Pair<String, ImageVector> {
+fun getCurrentAudioDevice(audioManager: AudioManager, context: Context): Pair<String, ImageVector> {
     val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
     val bluetoothDevice = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
     if (bluetoothDevice != null) {
         return try {
-            Pair(bluetoothDevice.productName.toString().ifBlank { "蓝牙设备" }, Icons.Default.Headset)
+            Pair(bluetoothDevice.productName.toString().ifBlank { context.getString(R.string.nowplaying_bluetooth_device) }, Icons.Default.Headset)
         } catch (_: SecurityException) {
-            Pair("蓝牙设备", Icons.Default.Headset)
+            Pair(context.getString(R.string.nowplaying_bluetooth_device), Icons.Default.Headset)
         }
     }
     val wiredHeadset =
         devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES }
-    if (wiredHeadset != null) return Pair("有线耳机", Icons.Default.Headset)
-    return Pair("手机扬声器", Icons.Default.SpeakerGroup)
+    if (wiredHeadset != null) return Pair(context.getString(R.string.nowplaying_wired_headset), Icons.Default.Headset)
+    return Pair(context.getString(R.string.nowplaying_phone_speaker), Icons.Default.SpeakerGroup)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -987,10 +1155,11 @@ fun MoreOptionsSheet(
     lyricFontScale: Float,
     onLyricFontScaleChange: (Float) -> Unit
 ) {
-    val sheetState = rememberModalBottomSheetState()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showSearchView by remember { mutableStateOf(false) }
     var showOffsetSheet by remember { mutableStateOf(false) }
     var showFontSizeSheet by remember { mutableStateOf(false) }
+    var showEditInfoSheet by remember { mutableStateOf(false) }
     var enterAlbum by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
@@ -1004,17 +1173,41 @@ fun MoreOptionsSheet(
             viewModel.performSearch()
         }
     }
-    
+
     ModalBottomSheet(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            coroutineScope.launch {
+                sheetState.hide()
+                onDismiss()
+            }
+        },
         sheetState = sheetState,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MaterialTheme.colorScheme.surface
     ) {
+        // 处理子页面的返回键导航
+        BackHandler(enabled = showOffsetSheet || showFontSizeSheet || showSearchView || showEditInfoSheet) {
+            when {
+                showOffsetSheet -> showOffsetSheet = false
+                showFontSizeSheet -> showFontSizeSheet = false
+                showSearchView -> showSearchView = false
+                showEditInfoSheet -> showEditInfoSheet = false
+            }
+        }
+
+        // 处理主页面的返回键
+        BackHandler(enabled = !showOffsetSheet && !showFontSizeSheet && !showSearchView && !showEditInfoSheet) {
+            coroutineScope.launch {
+                sheetState.hide()
+                onDismiss()
+            }
+        }
+
         AnimatedContent(
             targetState = when {
                 showOffsetSheet -> "Offset"
                 showFontSizeSheet -> "FontSize"
                 showSearchView -> "Search"
+                showEditInfoSheet -> "EditInfo"
                 else -> "Main"
             },
             transitionSpec = {
@@ -1028,18 +1221,23 @@ fun MoreOptionsSheet(
                 "Main" -> {
                     Column(Modifier.padding(bottom = 32.dp)) {
                         ListItem(
-                            headlineContent = { Text("获取歌曲信息") },
+                            headlineContent = { Text(stringResource(R.string.music_get_info)) },
                             leadingContent = { Icon(Icons.Outlined.Info, null) },
                             modifier = Modifier.clickable { showSearchView = true }
                         )
+                        ListItem(
+                            headlineContent = { Text(stringResource(R.string.music_edit_info)) },
+                            leadingContent = { Icon(Icons.Outlined.Edit, null) },
+                            modifier = Modifier.clickable { showEditInfoSheet = true }
+                        )
                         if (AudioDownloadManager.getLocalFilePath(context, originalSong) == null) {
                             ListItem(
-                                headlineContent = { Text("下载到本地") },
+                                headlineContent = { Text(stringResource(R.string.download_to_local)) },
                                 leadingContent = { Icon(Icons.Outlined.Download, null) },
                                 modifier = Modifier.clickable {
                                     viewModel.downloadSong(context, originalSong)
                                     coroutineScope.launch {
-                                        snackbarHostState.showSnackbar("开始下载：${originalSong.name}")
+                                        snackbarHostState.showSnackbar(context.getString(R.string.download_starting, originalSong.name))
                                     }
                                     onDismiss()
                                 }
@@ -1047,12 +1245,12 @@ fun MoreOptionsSheet(
                         }
 
                         ListItem(
-                            headlineContent = { Text("调整歌词偏移") },
+                            headlineContent = { Text(stringResource(R.string.lyrics_adjust_offset)) },
                             leadingContent = { Icon(Icons.Outlined.Timer, null) },
                             modifier = Modifier.clickable { showOffsetSheet = true }
                         )
                         ListItem(
-                            headlineContent = { Text("歌词字体大小") },
+                            headlineContent = { Text(stringResource(R.string.lyrics_font_size)) },
                             leadingContent = { Icon(Icons.Outlined.FormatSize, null) },
                             supportingContent = {
                                 Text("${(lyricFontScale * 100).roundToInt()}%")
@@ -1063,7 +1261,7 @@ fun MoreOptionsSheet(
                             val albumName = originalSong.album.replace(PlayerManager.NETEASE_SOURCE_TAG, "")
                             val album = NeteaseAlbum(id = originalSong.albumId.toLong(), name = albumName, size = 0, picUrl = originalSong?.coverUrl ?:"")
                             ListItem(
-                                headlineContent = { Text("查看专辑 $albumName") },
+                                headlineContent = { Text(stringResource(R.string.music_view_album, albumName)) },
                                 leadingContent = { Icon(Icons.Outlined.LibraryMusic, null) },
                                 modifier = Modifier.clickable {
                                     onEnterAlbum(album)
@@ -1073,7 +1271,7 @@ fun MoreOptionsSheet(
                             )
                         }
                         ListItem(
-                            headlineContent = { Text("分享") },
+                            headlineContent = { Text(stringResource(R.string.action_share)) },
                             leadingContent = { Icon(Icons.Outlined.Share, null) },
                             modifier = Modifier.clickable {
                                 val song = originalSong
@@ -1101,7 +1299,7 @@ fun MoreOptionsSheet(
                                     "https://music.163.com/#/song?id=${song.id}"
                                 }
 
-                                val shareText = "分享歌曲：${song.name} - ${song.artist}\n$url"
+                                val shareText = context.getString(R.string.nowplaying_share_song, song.name, song.artist, url)
 
                                 val sendIntent: Intent = Intent().apply {
                                     action = Intent.ACTION_SEND
@@ -1130,13 +1328,13 @@ fun MoreOptionsSheet(
                         OutlinedTextField(
                             value = searchState.keyword,
                             onValueChange = { viewModel.onKeywordChange(it) },
-                            label = { Text("搜索关键词") },
+                            label = { Text(stringResource(R.string.search_keywords)) },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
                             trailingIcon = {
                                 HapticIconButton(onClick = { viewModel.performSearch() }) {
-                                    Icon(Icons.Filled.Search, contentDescription = "搜索")
+                                    Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.cd_search))
                                 }
                             },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
@@ -1196,11 +1394,21 @@ fun MoreOptionsSheet(
                                 }
                             } else {
                                 Text(
-                                    text = searchState.error ?: "无搜索结果",
+                                    text = searchState.error ?: stringResource(R.string.nowplaying_no_search_result),
                                     modifier = Modifier.align(Alignment.Center),
                                     color = if (searchState.error != null) MaterialTheme.colorScheme.error else LocalContentColor.current
                                 )
                             }
+                        }
+
+                        // 完成按钮
+                        HapticTextButton(
+                            onClick = { showSearchView = false },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            Text(stringResource(R.string.action_done))
                         }
                     }
                 }
@@ -1219,6 +1427,15 @@ fun MoreOptionsSheet(
                         onDismiss = { showFontSizeSheet = false }
                     )
                 }
+
+                "EditInfo" -> {
+                    EditSongInfoSheet(
+                        viewModel = viewModel,
+                        originalSong = originalSong,
+                        onDismiss = { showEditInfoSheet = false },
+                        snackbarHostState = snackbarHostState
+                    )
+                }
             }
 
             // Snackbar
@@ -1231,7 +1448,7 @@ fun MoreOptionsSheet(
 }
 
 @Composable
-private fun VolumeControlSheetContent() {
+fun VolumeControlSheetContent() {
     val context = LocalContext.current
     val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -1270,7 +1487,7 @@ private fun VolumeControlSheetContent() {
 }
 
 @Composable
-private fun LyricOffsetSheet(song: SongItem, onDismiss: () -> Unit) {
+fun LyricOffsetSheet(song: SongItem, onDismiss: () -> Unit) {
     var currentOffset by remember { mutableLongStateOf(song.userLyricOffsetMs) }
     val scope = rememberCoroutineScope()
 
@@ -1281,7 +1498,7 @@ private fun LyricOffsetSheet(song: SongItem, onDismiss: () -> Unit) {
             .windowInsetsPadding(WindowInsets.navigationBars),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("歌词偏移调整", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.lyrics_adjust_offset), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Text(
             text = "${if (currentOffset > 0) "+" else ""}${currentOffset} ms",
@@ -1292,7 +1509,7 @@ private fun LyricOffsetSheet(song: SongItem, onDismiss: () -> Unit) {
                 else -> LocalContentColor.current
             }
         )
-        Text("向右滑动歌词快进，向左滑动歌词延后", style = MaterialTheme.typography.bodySmall)
+        Text(stringResource(R.string.lyrics_offset_hint), style = MaterialTheme.typography.bodySmall)
 
         Slider(
             value = currentOffset.toFloat(),
@@ -1309,13 +1526,13 @@ private fun LyricOffsetSheet(song: SongItem, onDismiss: () -> Unit) {
         )
         Spacer(Modifier.height(16.dp))
         HapticTextButton(onClick = onDismiss) {
-            Text("完成")
+            Text(stringResource(R.string.action_done))
         }
     }
 }
 
 @Composable
-private fun LyricFontSizeSheet(
+fun LyricFontSizeSheet(
     currentScale: Float,
     onScaleCommit: (Float) -> Unit,
     onDismiss: () -> Unit
@@ -1333,14 +1550,14 @@ private fun LyricFontSizeSheet(
             .windowInsetsPadding(WindowInsets.navigationBars),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("歌词字体大小", style = MaterialTheme.typography.titleMedium)
+        Text(stringResource(R.string.lyrics_font_size), style = MaterialTheme.typography.titleMedium)
         Spacer(Modifier.height(8.dp))
         Text(
             text = "${(sliderValue * 100).roundToInt()}%",
             style = MaterialTheme.typography.titleLarge.copy(fontFamily = FontFamily.Monospace)
         )
         Text(
-            text = "向左减小，向右增大",
+            text = stringResource(R.string.nowplaying_font_size_hint),
             style = MaterialTheme.typography.bodySmall
         )
 
@@ -1353,7 +1570,7 @@ private fun LyricFontSizeSheet(
         )
 
         Text(
-            text = "示例歌词：春风十里不如你",
+            text = stringResource(R.string.nowplaying_lyrics_sample),
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 4.dp),
@@ -1366,7 +1583,822 @@ private fun LyricFontSizeSheet(
             onScaleCommit(sliderValue)
             onDismiss()
         }) {
-            Text("完成")
+            Text(stringResource(R.string.action_done))
         }
     }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditSongInfoSheet(
+    viewModel: NowPlayingViewModel,
+    originalSong: SongItem,
+    onDismiss: () -> Unit,
+    snackbarHostState: SnackbarHostState
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+
+    // 监听当前播放的歌曲，以便在"获取歌曲信息"后更新UI
+    val currentSong by PlayerManager.currentSongFlow.collectAsState()
+    val actualSong = if (currentSong?.id == originalSong.id && currentSong?.album == originalSong.album) {
+        currentSong!!
+    } else {
+        originalSong
+    }
+
+    var coverUrl by remember { mutableStateOf(actualSong.customCoverUrl ?: actualSong.coverUrl ?: "") }
+    var songName by remember { mutableStateOf(actualSong.customName ?: actualSong.name) }
+    var artistName by remember { mutableStateOf(actualSong.customArtist ?: actualSong.artist) }
+    var showSearchResults by remember { mutableStateOf(false) }
+    var selectedSongForFill by remember { mutableStateOf<SongSearchInfo?>(null) }
+    var showLyricsEditor by remember { mutableStateOf(false) }
+    var lyricsToEdit by remember { mutableStateOf<String?>(null) }
+    var translatedLyricsToEdit by remember { mutableStateOf<String?>(null) }
+    var shouldClearLyrics by remember { mutableStateOf(false) }  // 标记是否应该清除歌词(B站)
+    var shouldRestoreLyrics by remember { mutableStateOf(false) }  // 标记是否应该恢复歌词(网易云)
+    var originalLyric by remember { mutableStateOf<String?>(null) }  // 保存要恢复的原始歌词
+    var originalTranslatedLyric by remember { mutableStateOf<String?>(null) }  // 保存要恢复的原始翻译歌词
+
+    // 标记用户是否手动编辑过，避免自动重置
+    var userHasEdited by remember { mutableStateOf(false) }
+
+    val searchState by viewModel.manualSearchState.collectAsState()
+
+    // 创建嵌套滚动连接来消费滚动事件，防止传递给 ModalBottomSheet
+    val scrollState = rememberScrollState()
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                // 在滚动前不消费，让 verticalScroll 正常处理
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                // 消费所有剩余滚动事件，防止传递给 ModalBottomSheet
+                return available
+            }
+
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // 消费所有 fling 速度，防止传递给 ModalBottomSheet
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // 消费所有剩余 fling 速度
+                return available
+            }
+        }
+    }
+
+    // 当歌曲信息更新时，同步更新UI（仅在用户未手动编辑时）
+    LaunchedEffect(actualSong) {
+        if (!userHasEdited) {
+            coverUrl = actualSong.customCoverUrl ?: actualSong.coverUrl ?: ""
+            songName = actualSong.customName ?: actualSong.name
+            artistName = actualSong.customArtist ?: actualSong.artist
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.prepareForSearch(originalSong.name)
+    }
+
+    // 使用 AnimatedVisibility 控制内容显示，避免重叠
+    AnimatedVisibility(
+        visible = !showLyricsEditor,
+        enter = fadeIn(),
+        exit = fadeOut()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .fillMaxHeight(0.9f)
+                .padding(horizontal = 24.dp, vertical = 16.dp)
+                .windowInsetsPadding(WindowInsets.navigationBars),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+        // 标题栏
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.music_edit_info),
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            HapticTextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .nestedScroll(nestedScrollConnection)
+                .verticalScroll(scrollState),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // 封面链接输入框
+            OutlinedTextField(
+                value = coverUrl,
+                onValueChange = { coverUrl = it },
+                label = { Text(stringResource(R.string.music_cover_url)) },
+                placeholder = { Text(stringResource(R.string.music_cover_url_hint)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            // 封面预览
+            if (coverUrl.isNotBlank()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    AsyncImage(
+                        model = offlineCachedImageRequest(context, coverUrl),
+                        contentDescription = stringResource(R.string.music_edit_cover),
+                        modifier = Modifier
+                            .size(120.dp)
+                            .clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+            }
+
+            // 标题输入框
+            OutlinedTextField(
+                value = songName,
+                onValueChange = { songName = it },
+                label = { Text(stringResource(R.string.music_edit_title)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            // 艺术家输入框
+            OutlinedTextField(
+                value = artistName,
+                onValueChange = { artistName = it },
+                label = { Text(stringResource(R.string.music_edit_artist)) },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true
+            )
+
+            // 编辑歌词按钮
+            HapticTextButton(
+                onClick = {
+                    // 在打开编辑器前先获取歌词
+                    coroutineScope.launch {
+                        try {
+                            // 获取原文歌词
+                            val lyrics = if (actualSong.matchedLyric != null) {
+                                actualSong.matchedLyric
+                            } else {
+                                val lyricEntries = PlayerManager.getLyrics(actualSong)
+                                if (lyricEntries.isNotEmpty()) {
+                                    // 将 LyricEntry 列表转换回 LRC 格式
+                                    lyricEntries.joinToString("\n") { entry ->
+                                        val minutes = entry.startTimeMs / 60000
+                                        val seconds = (entry.startTimeMs % 60000) / 1000
+                                        val millis = entry.startTimeMs % 1000
+                                        "[%02d:%02d.%02d]%s".format(minutes, seconds, millis / 10, entry.text)
+                                    }
+                                } else {
+                                    ""
+                                }
+                            }
+
+                            // 获取翻译歌词
+                            val translatedLyrics = try {
+                                if (actualSong.matchedTranslatedLyric != null) {
+                                    actualSong.matchedTranslatedLyric
+                                } else {
+                                    val translatedEntries = PlayerManager.getTranslatedLyrics(actualSong)
+                                    if (translatedEntries.isNotEmpty()) {
+                                        translatedEntries.joinToString("\n") { entry ->
+                                            val minutes = entry.startTimeMs / 60000
+                                            val seconds = (entry.startTimeMs % 60000) / 1000
+                                            val millis = entry.startTimeMs % 1000
+                                            "[%02d:%02d.%02d]%s".format(minutes, seconds, millis / 10, entry.text)
+                                        }
+                                    } else {
+                                        ""
+                                    }
+                                }
+                            } catch (e: Exception) {
+                                ""
+                            }
+
+                            lyricsToEdit = lyrics
+                            translatedLyricsToEdit = translatedLyrics
+                            showLyricsEditor = true
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            lyricsToEdit = actualSong.matchedLyric ?: ""
+                            translatedLyricsToEdit = ""
+                            showLyricsEditor = true
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.music_edit_lyrics))
+            }
+        }
+
+        // 搜索自动填充按钮
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            HapticTextButton(
+                onClick = {
+                    viewModel.performSearch()
+                    showSearchResults = true
+                    focusManager.clearFocus()
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.music_auto_fill))
+            }
+
+            HapticTextButton(
+                onClick = {
+                    viewModel.fetchOriginalInfo(context, actualSong) { success, info, message ->
+                        if (success && info != null) {
+                            // 填充到编辑框，但不保存
+                            songName = info.name
+                            artistName = info.artist
+                            coverUrl = info.coverUrl ?: ""
+
+                            // 根据音源类型设置不同的标志
+                            if (info.shouldClearLyrics) {
+                                // B站音源：标记需要清除歌词
+                                shouldClearLyrics = true
+                                shouldRestoreLyrics = false
+                                NPLogger.d("NowPlayingScreen", "B站音源恢复: 将清除歌词")
+                            } else {
+                                // 网易云音源：保存原始歌词，标记需要恢复
+                                shouldClearLyrics = false
+                                shouldRestoreLyrics = info.lyric != null || info.translatedLyric != null
+                                originalLyric = info.lyric
+                                originalTranslatedLyric = info.translatedLyric
+                                NPLogger.d("NowPlayingScreen", "网易云音源恢复: 将恢复歌词, hasLyric=${info.lyric != null}, hasTranslation=${info.translatedLyric != null}")
+                            }
+
+                            // 标记用户已编辑，防止自动更新覆盖
+                            userHasEdited = true
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        } else {
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text(stringResource(R.string.music_restore_original))
+            }
+
+            HapticTextButton(
+                onClick = {
+                    coroutineScope.launch {
+                        try {
+                            // 处理歌词：清除(B站)或恢复(网易云)
+                            if (shouldClearLyrics) {
+                                // B站音源：清除歌词
+                                NPLogger.d("NowPlayingScreen", "=== 开始清除歌词流程 ===")
+                                NPLogger.d("NowPlayingScreen", "actualSong详情: id=${actualSong.id}, album='${actualSong.album}', name='${actualSong.name}', artist='${actualSong.artist}'")
+                                NPLogger.d("NowPlayingScreen", "当前歌词状态: matchedLyric=${actualSong.matchedLyric?.take(50)}, matchedTranslatedLyric=${actualSong.matchedTranslatedLyric?.take(50)}")
+
+                                NPLogger.d("NowPlayingScreen", "准备调用PlayerManager.updateSongLyricsAndTranslation清除歌词")
+                                PlayerManager.updateSongLyricsAndTranslation(
+                                    actualSong,
+                                    null,  // 清空歌词
+                                    null  // 清空翻译歌词
+                                )
+                                NPLogger.d("NowPlayingScreen", "PlayerManager.updateSongLyricsAndTranslation调用完成")
+                                shouldClearLyrics = false  // 重置标志
+                                NPLogger.d("NowPlayingScreen", "=== 清除歌词流程完成 ===")
+                            } else if (shouldRestoreLyrics) {
+                                // 网易云音源：恢复歌词
+                                NPLogger.d("NowPlayingScreen", "=== 开始恢复歌词流程 ===")
+                                NPLogger.d("NowPlayingScreen", "actualSong详情: id=${actualSong.id}, album='${actualSong.album}'")
+                                NPLogger.d("NowPlayingScreen", "原始歌词: lyric=${originalLyric?.take(50)}, translatedLyric=${originalTranslatedLyric?.take(50)}")
+
+                                NPLogger.d("NowPlayingScreen", "准备调用PlayerManager.updateSongLyricsAndTranslation恢复歌词")
+                                PlayerManager.updateSongLyricsAndTranslation(
+                                    actualSong,
+                                    originalLyric,  // 恢复原始歌词
+                                    originalTranslatedLyric  // 恢复原始翻译歌词
+                                )
+                                NPLogger.d("NowPlayingScreen", "PlayerManager.updateSongLyricsAndTranslation调用完成")
+                                shouldRestoreLyrics = false  // 重置标志
+                                originalLyric = null
+                                originalTranslatedLyric = null
+                                NPLogger.d("NowPlayingScreen", "=== 恢复歌词流程完成 ===")
+                            }
+
+                            // 然后更新歌曲信息
+                            viewModel.updateSongInfo(
+                                originalSong = actualSong,
+                                newCoverUrl = coverUrl.ifBlank { null },
+                                newName = songName,
+                                newArtist = artistName
+                            )
+
+                            // 重置编辑标志，允许自动更新
+                            userHasEdited = false
+                            onDismiss()
+                        } catch (e: Exception) {
+                            NPLogger.e("NowPlayingScreen", "保存歌曲信息失败", e)
+                            Toast.makeText(context, "保存失败: ${e.message}", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(stringResource(R.string.music_save_changes))
+            }
+        }
+    }
+    } // 关闭 AnimatedVisibility
+
+    // 填充选项对话框
+    if (selectedSongForFill != null) {
+        FillOptionsDialog(
+            songResult = selectedSongForFill!!,
+            onDismiss = { selectedSongForFill = null },
+            onConfirm = { fillCover, fillTitle, fillArtist, fillLyrics ->
+                // 标记用户已编辑，防止自动重置
+                userHasEdited = true
+
+                if (fillCover) {
+                    coverUrl = selectedSongForFill!!.coverUrl?.replaceFirst("http://", "https://") ?: ""
+                }
+                if (fillTitle) {
+                    songName = selectedSongForFill!!.songName
+                }
+                if (fillArtist) {
+                    artistName = selectedSongForFill!!.singer
+                }
+                if (fillLyrics) {
+                    selectedSongForFill?.let { selectedSong ->
+                        viewModel.fillLyrics(context, actualSong, selectedSong) { success, message ->
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(message)
+                            }
+                        }
+                    }
+                }
+                selectedSongForFill = null
+                showSearchResults = false
+            }
+        )
+    }
+
+    // 歌词编辑器
+    if (showLyricsEditor) {
+        LyricsEditorSheet(
+            originalSong = actualSong,
+            initialLyrics = lyricsToEdit ?: actualSong.matchedLyric ?: "",
+            initialTranslatedLyrics = translatedLyricsToEdit ?: "",
+            onDismiss = {
+                showLyricsEditor = false
+                // 不关闭外层Sheet，只关闭歌词编辑器
+            }
+        )
+    }
+
+    // 搜索结果Sheet
+    if (showSearchResults) {
+        ModalBottomSheet(
+            onDismissRequest = { showSearchResults = false },
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.8f)
+                    .padding(horizontal = 24.dp, vertical = 16.dp)
+                    .windowInsetsPadding(WindowInsets.navigationBars),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                // 标题栏
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = stringResource(R.string.music_select_result),
+                        style = MaterialTheme.typography.titleMedium
+                    )
+
+                    HapticTextButton(onClick = { showSearchResults = false }) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
+                }
+
+                // 平台切换
+                androidx.compose.material3.PrimaryTabRow(
+                    selectedTabIndex = searchState.selectedPlatform.ordinal,
+                    containerColor = Color.Transparent,
+                    contentColor = MaterialTheme.colorScheme.primary
+                ) {
+                    MusicPlatform.entries.forEachIndexed { index, platform ->
+                        Tab(
+                            selected = searchState.selectedPlatform.ordinal == index,
+                            onClick = { viewModel.selectPlatform(platform) },
+                            text = { Text(platform.name.replace("_", " ")) }
+                        )
+                    }
+                }
+
+                // 搜索结果列表
+                Box(Modifier.weight(1f)) {
+                    if (searchState.isLoading) {
+                        CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    } else if (searchState.searchResults.isNotEmpty()) {
+                        LazyColumn {
+                            items(searchState.searchResults) { songResult ->
+                                ListItem(
+                                    headlineContent = { Text(songResult.songName, maxLines = 1) },
+                                    supportingContent = { Text(songResult.singer, maxLines = 1) },
+                                    leadingContent = {
+                                        AsyncImage(
+                                            model = offlineCachedImageRequest(
+                                                context,
+                                                songResult.coverUrl?.replaceFirst("http://", "https://")
+                                            ),
+                                            contentDescription = songResult.songName,
+                                            modifier = Modifier
+                                                .size(48.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                        )
+                                    },
+                                    modifier = Modifier.clickable {
+                                        selectedSongForFill = songResult
+                                        showSearchResults = false
+                                    }
+                                )
+                            }
+                        }
+                    } else {
+                        Text(
+                            text = searchState.error ?: stringResource(R.string.nowplaying_no_search_result),
+                            modifier = Modifier.align(Alignment.Center),
+                            color = if (searchState.error != null) MaterialTheme.colorScheme.error else LocalContentColor.current
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LyricsEditorSheet(
+    originalSong: SongItem,
+    initialLyrics: String,
+    initialTranslatedLyrics: String,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
+
+    var lyricsText by remember { mutableStateOf(initialLyrics) }
+    var translatedLyricsText by remember { mutableStateOf(initialTranslatedLyrics) }
+    var isSaving by remember { mutableStateOf(false) }
+    var selectedTab by remember { mutableIntStateOf(0) }
+
+    // 创建嵌套滚动连接来消费滚动事件，防止传递给 ModalBottomSheet
+    val nestedScrollConnection = remember {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                // 在滚动前不消费，让内部滚动正常处理
+                return androidx.compose.ui.geometry.Offset.Zero
+            }
+
+            override fun onPostScroll(consumed: androidx.compose.ui.geometry.Offset, available: androidx.compose.ui.geometry.Offset, source: NestedScrollSource): androidx.compose.ui.geometry.Offset {
+                // 消费所有剩余滚动事件，防止传递给 ModalBottomSheet
+                return available
+            }
+
+            override suspend fun onPreFling(available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // 消费所有 fling 速度，防止传递给 ModalBottomSheet
+                return available
+            }
+
+            override suspend fun onPostFling(consumed: androidx.compose.ui.unit.Velocity, available: androidx.compose.ui.unit.Velocity): androidx.compose.ui.unit.Velocity {
+                // 消费所有剩余 fling 速度
+                return available
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.9f)
+            .pointerInput(Unit) {
+                // 拦截所有触摸事件，防止传递给 ModalBottomSheet
+                detectVerticalDragGestures { _, _ -> }
+            }
+            .nestedScroll(nestedScrollConnection)
+            .padding(horizontal = 24.dp, vertical = 16.dp)
+            .windowInsetsPadding(WindowInsets.navigationBars),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // 标题栏
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = stringResource(R.string.music_edit_lyrics),
+                style = MaterialTheme.typography.titleMedium
+            )
+
+            HapticTextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+
+        // 歌曲信息
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+                .padding(12.dp)
+        ) {
+            Text(
+                text = originalSong.customName ?: originalSong.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = originalSong.customArtist ?: originalSong.artist,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        // 标签页切换
+        androidx.compose.material3.PrimaryTabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = Color.Transparent,
+            contentColor = MaterialTheme.colorScheme.primary
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                text = { Text(stringResource(R.string.lyrics_original)) }
+            )
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                text = { Text(stringResource(R.string.lyrics_translation)) }
+            )
+        }
+
+        // 歌词编辑器
+        when (selectedTab) {
+            0 -> {
+                OutlinedTextField(
+                    value = lyricsText,
+                    onValueChange = { lyricsText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.lyrics_editor_hint_original),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    maxLines = Int.MAX_VALUE
+                )
+            }
+            1 -> {
+                OutlinedTextField(
+                    value = translatedLyricsText,
+                    onValueChange = { translatedLyricsText = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    placeholder = {
+                        Text(
+                            text = stringResource(R.string.lyrics_editor_hint_translation),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                        )
+                    },
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        fontFamily = FontFamily.Monospace
+                    ),
+                    maxLines = Int.MAX_VALUE
+                )
+            }
+        }
+
+        // 底部按钮
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            HapticTextButton(
+                onClick = {
+                    when (selectedTab) {
+                        0 -> lyricsText = ""
+                        1 -> translatedLyricsText = ""
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(stringResource(R.string.action_clear))
+            }
+
+            HapticTextButton(
+                onClick = {
+                    clipboardManager.getText()?.let { text ->
+                        when (selectedTab) {
+                            0 -> lyricsText = text.text
+                            1 -> translatedLyricsText = text.text
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(stringResource(R.string.action_paste))
+            }
+
+            HapticTextButton(
+                onClick = {
+                    isSaving = true
+                    coroutineScope.launch {
+                        try {
+                            // 保存原文歌词
+                            PlayerManager.updateSongLyrics(originalSong, lyricsText)
+                            // 保存翻译歌词
+                            PlayerManager.updateSongTranslatedLyrics(originalSong, translatedLyricsText)
+                            onDismiss()
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        } finally {
+                            isSaving = false
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = !isSaving
+            ) {
+                if (isSaving) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Text(stringResource(R.string.music_save_changes))
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun FillOptionsDialog(
+    songResult: SongSearchInfo,
+    onDismiss: () -> Unit,
+    onConfirm: (fillCover: Boolean, fillTitle: Boolean, fillArtist: Boolean, fillLyrics: Boolean) -> Unit
+) {
+    var fillCover by remember { mutableStateOf(true) }
+    var fillTitle by remember { mutableStateOf(true) }
+    var fillArtist by remember { mutableStateOf(true) }
+    var fillLyrics by remember { mutableStateOf(true) }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.music_auto_fill_select)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 显示选中的歌曲信息
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .padding(12.dp)
+                ) {
+                    Text(
+                        text = songResult.songName,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = songResult.singer,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // 填充选项
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { fillCover = !fillCover }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = fillCover,
+                        onCheckedChange = { fillCover = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.music_auto_fill_cover))
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { fillTitle = !fillTitle }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = fillTitle,
+                        onCheckedChange = { fillTitle = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.music_auto_fill_title))
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { fillArtist = !fillArtist }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = fillArtist,
+                        onCheckedChange = { fillArtist = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.music_auto_fill_artist))
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { fillLyrics = !fillLyrics }
+                        .padding(vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    androidx.compose.material3.Checkbox(
+                        checked = fillLyrics,
+                        onCheckedChange = { fillLyrics = it }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.music_auto_fill_lyrics))
+                }
+            }
+        },
+        confirmButton = {
+            HapticTextButton(
+                onClick = { onConfirm(fillCover, fillTitle, fillArtist, fillLyrics) }
+            ) {
+                Text(stringResource(R.string.action_confirm))
+            }
+        },
+        dismissButton = {
+            HapticTextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.action_cancel))
+            }
+        }
+    )
 }

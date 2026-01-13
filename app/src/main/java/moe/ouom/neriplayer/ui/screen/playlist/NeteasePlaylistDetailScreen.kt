@@ -84,6 +84,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -99,6 +100,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -111,6 +115,8 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import kotlinx.coroutines.launch
+import moe.ouom.neriplayer.R
+import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.player.PlayerManager
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.data.FavoritePlaylistRepository
@@ -118,6 +124,7 @@ import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteasePlaylist
 import moe.ouom.neriplayer.ui.viewmodel.playlist.PlaylistDetailViewModel
 import moe.ouom.neriplayer.ui.viewmodel.playlist.PlaylistDetailUiState
+import moe.ouom.neriplayer.ui.viewmodel.playlist.PlaylistHeader
 import moe.ouom.neriplayer.ui.viewmodel.playlist.SongItem
 import moe.ouom.neriplayer.core.player.AudioDownloadManager
 import androidx.compose.animation.core.animateFloatAsState
@@ -163,7 +170,30 @@ fun NeteasePlaylistDetailScreen(
     )
 
     val ui by vm.uiState.collectAsState()
-    LaunchedEffect(playlist.id) { vm.startPlaylist(playlist) }
+    // 使用Unit作为key，确保每次进入都重新加载最新数据
+    LaunchedEffect(Unit) { vm.startPlaylist(playlist) }
+
+    // 保存最新的header数据，用于在Screen销毁时更新使用记录
+    var latestHeader by remember { mutableStateOf<PlaylistHeader?>(null) }
+    LaunchedEffect(ui.header) {
+        ui.header?.let { latestHeader = it }
+    }
+
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    DisposableEffect(Unit) {
+        onDispose {
+            latestHeader?.let { header ->
+                AppContainer.playlistUsageRepo.updateInfo(
+                    id = header.id,
+                    name = header.name,
+                    picUrl = header.coverUrl,
+                    trackCount = header.trackCount,
+                    source = "netease"
+                )
+            }
+        }
+    }
+
     DetailScreen(
         vm = vm,
         ui = ui,
@@ -192,7 +222,30 @@ fun NeteaseAlbumDetailScreen(
     )
 
     val ui by vm.uiState.collectAsState()
-    LaunchedEffect(album.id) { vm.startAlbum(album) }
+    // 使用Unit作为key，确保每次进入都重新加载最新数据
+    LaunchedEffect(Unit) { vm.startAlbum(album) }
+
+    // 保存最新的header数据，用于在Screen销毁时更新使用记录
+    var latestHeader by remember { mutableStateOf<PlaylistHeader?>(null) }
+    LaunchedEffect(ui.header) {
+        ui.header?.let { latestHeader = it }
+    }
+
+    // 在Screen销毁时更新使用记录，确保返回主页时卡片显示最新信息
+    DisposableEffect(Unit) {
+        onDispose {
+            latestHeader?.let { header ->
+                AppContainer.playlistUsageRepo.updateInfo(
+                    id = header.id,
+                    name = header.name,
+                    picUrl = header.coverUrl,
+                    trackCount = header.trackCount,
+                    source = "neteaseAlbum"
+                )
+            }
+        }
+    }
+
     DetailScreen(
         vm = vm,
         ui = ui,
@@ -277,7 +330,7 @@ fun DetailScreen(
                                 HapticIconButton(onClick = onBack) {
                                     Icon(
                                         Icons.AutoMirrored.Filled.ArrowBack,
-                                        contentDescription = "返回"
+                                        contentDescription = stringResource(R.string.cd_back)
                                     )
                                 }
                             },
@@ -285,7 +338,7 @@ fun DetailScreen(
                                 HapticIconButton(onClick = {
                                     showSearch = !showSearch
                                     if (!showSearch) searchQuery = ""
-                                }) { Icon(Icons.Filled.Search, contentDescription = "搜索歌曲") }
+                                }) { Icon(Icons.Filled.Search, contentDescription = stringResource(R.string.cd_search_songs)) }
 
                                 // 收藏按钮
                                 HapticIconButton(onClick = {
@@ -308,7 +361,7 @@ fun DetailScreen(
                                 }) {
                                     Icon(
                                         imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                        contentDescription = if (isFavorite) "取消收藏" else "收藏歌单",
+                                        contentDescription = if (isFavorite) stringResource(R.string.action_unfavorite) else stringResource(R.string.action_favorite_playlist),
                                         tint = if (isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
                                     )
                                 }
@@ -317,7 +370,7 @@ fun DetailScreen(
                                     HapticIconButton(onClick = { showDownloadManager = true }) {
                                         Icon(
                                             Icons.Outlined.Download,
-                                            contentDescription = "下载管理器",
+                                            contentDescription = stringResource(R.string.cd_download_manager),
                                             tint = MaterialTheme.colorScheme.primary
                                         )
                                     }
@@ -335,10 +388,10 @@ fun DetailScreen(
                         val allSelected =
                             selectedIds.size == ui.tracks.size && ui.tracks.isNotEmpty()
                         TopAppBar(
-                            title = { Text("已选 ${selectedIds.size} 项") },
+                            title = { Text(stringResource(R.string.common_selected_count, selectedIds.size)) },
                             navigationIcon = {
                                 HapticIconButton(onClick = { exitSelection() }) {
-                                    Icon(Icons.Filled.Close, contentDescription = "退出多选")
+                                    Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_exit_select))
                                 }
                             },
                             actions = {
@@ -356,7 +409,7 @@ fun DetailScreen(
                                 ) {
                                     Icon(
                                         Icons.AutoMirrored.Outlined.PlaylistAdd,
-                                        contentDescription = "导出到歌单"
+                                        contentDescription = stringResource(R.string.cd_export_playlist)
                                     )
                                 }
                                 HapticIconButton(
@@ -375,7 +428,7 @@ fun DetailScreen(
                                 ) {
                                     Icon(
                                         Icons.Outlined.Download,
-                                        contentDescription = "下载选中歌曲"
+                                        contentDescription = stringResource(R.string.cd_download_selected)
                                     )
                                 }
                             },
@@ -394,7 +447,7 @@ fun DetailScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 8.dp),
-                            placeholder = { Text("搜索歌单内歌曲") },
+                            placeholder = { Text(stringResource(R.string.playlist_search_hint)) },
                             singleLine = true
                         )
                     }
@@ -479,7 +532,11 @@ fun DetailScreen(
                                         )
                                         Spacer(Modifier.height(4.dp))
                                         Text(
-                                            text = "播放量 ${formatPlayCount(ui.header?.playCount ?: 0)} · ${(ui.header?.trackCount ?: 0)} 首",
+                                            text = stringResource(
+                                                R.string.playlist_play_count_format,
+                                                formatPlayCount(context, ui.header?.playCount ?: 0),
+                                                ui.header?.trackCount ?: 0
+                                            ),
                                             style = MaterialTheme.typography.bodySmall.copy(
                                                 shadow = Shadow(
                                                     color = Color.Black.copy(alpha = 0.6f),
@@ -505,7 +562,7 @@ fun DetailScreen(
                                             horizontalArrangement = Arrangement.Center
                                         ) {
                                             CircularProgressIndicator()
-                                            Text("  正在拉取歌单曲目...")
+                                            Text(stringResource(R.string.playlist_loading_content))
                                         }
                                     }
                                 }
@@ -519,7 +576,7 @@ fun DetailScreen(
                                             horizontalAlignment = Alignment.CenterHorizontally
                                         ) {
                                             Text(
-                                                text = "加载失败：${ui.error}",
+                                                text = stringResource(R.string.playlist_load_failed_format, ui.error ?: ""),
                                                 color = MaterialTheme.colorScheme.error
                                             )
                                             Spacer(Modifier.height(8.dp))
@@ -554,7 +611,8 @@ fun DetailScreen(
                                                 val full = ui.tracks
                                                 val pos = full.indexOfFirst { it.id == item.id }
                                                 if (pos >= 0) onSongClick(full, pos)
-                                            }
+                                            },
+                                            snackbarHostState = snackbarHostState
                                         )
                                     }
                                 }
@@ -575,7 +633,7 @@ fun DetailScreen(
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Outlined.PlaylistPlay,
-                                    contentDescription = "定位到正在播放"
+                                    contentDescription = stringResource(R.string.cd_locate_playing)
                                 )
                             }
                         }
@@ -589,7 +647,7 @@ fun DetailScreen(
                         sheetState = exportSheetState
                     ) {
                         Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp)) {
-                            Text("导出到本地歌单", style = MaterialTheme.typography.titleMedium)
+                            Text(stringResource(R.string.playlist_export_to_local), style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.height(8.dp))
 
                             LazyColumn {
@@ -613,7 +671,7 @@ fun DetailScreen(
                                         Text(pl.name, style = MaterialTheme.typography.bodyLarge)
                                         Spacer(Modifier.weight(1f))
                                         Text(
-                                            "${pl.songs.size} 首",
+                                            stringResource(R.string.count_songs_format, pl.songs.size),
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
@@ -634,7 +692,7 @@ fun DetailScreen(
                                     value = newName,
                                     onValueChange = { newName = it },
                                     modifier = Modifier.weight(1f),
-                                    placeholder = { Text("新建歌单名称") },
+                                    placeholder = { Text(stringResource(R.string.playlist_create_name)) },
                                     singleLine = true
                                 )
                                 Spacer(Modifier.width(12.dp))
@@ -657,7 +715,7 @@ fun DetailScreen(
                                             showExportSheet = false
                                         }
                                     }
-                                ) { Text("新建并导出") }
+                                ) { Text(stringResource(R.string.playlist_create_and_export)) }
                             }
                             Spacer(Modifier.height(12.dp))
                         }
@@ -698,7 +756,7 @@ fun DetailScreen(
                         style = MaterialTheme.typography.titleLarge
                     )
                     HapticIconButton(onClick = { showDownloadManager = false }) {
-                        Icon(Icons.Filled.Close, contentDescription = "关闭")
+                        Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.cd_close))
                     }
                 }
 
@@ -718,18 +776,18 @@ fun DetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "下载进度: ${progress.completedSongs}/${progress.totalSongs}",
+                                    stringResource(R.string.download_progress_format, progress.completedSongs, progress.totalSongs),
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 HapticTextButton(onClick = { AudioDownloadManager.cancelDownload() }) {
-                                    Text("取消", color = MaterialTheme.colorScheme.error)
+                                    Text(stringResource(R.string.action_cancel), color = MaterialTheme.colorScheme.error)
                                 }
                             }
 
                             if (progress.currentSong.isNotBlank()) {
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    "正在下载: ${progress.currentSong}",
+                                    stringResource(R.string.download_current_song, progress.currentSong),
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -738,7 +796,7 @@ fun DetailScreen(
                             Spacer(modifier = Modifier.height(12.dp))
 
                             Text(
-                                "总体进度: ${progress.percentage}%",
+                                stringResource(R.string.download_overall_progress, progress.percentage),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -758,7 +816,7 @@ fun DetailScreen(
                             progress.currentProgress?.let { currentProgress ->
                                 Spacer(modifier = Modifier.height(12.dp))
                                 Text(
-                                    "当前文件: ${currentProgress.percentage}% (${currentProgress.speedBytesPerSec / 1024} KB/s)",
+                                    stringResource(R.string.download_current_file_progress, currentProgress.percentage, currentProgress.speedBytesPerSec / 1024),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -838,11 +896,14 @@ private fun SongRow(
     onToggleSelect: () -> Unit,
     onLongPress: () -> Unit,
     onClick: () -> Unit,
-    indexWidth: Dp = 48.dp
+    indexWidth: Dp = 48.dp,
+    snackbarHostState: SnackbarHostState
 ) {
     val current by PlayerManager.currentSongFlow.collectAsState()
     val isPlayingSong = current?.id == song.id
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
+    val scope = rememberCoroutineScope()
 
     Row(
         modifier = Modifier
@@ -937,7 +998,7 @@ private fun SongRow(
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
-                        contentDescription = "更多操作",
+                        contentDescription = stringResource(R.string.cd_more_actions),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -947,16 +1008,27 @@ private fun SongRow(
                     onDismissRequest = { showMoreMenu = false }
                 ) {
                     DropdownMenuItem(
-                        text = { Text("接下来播放...") },
+                        text = { Text(stringResource(R.string.local_playlist_play_next)) },
                         onClick = {
                             PlayerManager.addToQueueNext(song)
                             showMoreMenu = false
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("添加到播放队列末尾") },
+                        text = { Text(stringResource(R.string.playlist_add_to_queue)) },
                         onClick = {
                             PlayerManager.addToQueueEnd(song)
+                            showMoreMenu = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.action_copy_song_info)) },
+                        onClick = {
+                            val songInfo = "${song.name}-${song.artist}"
+                            clipboardManager.setText(AnnotatedString(songInfo))
+                            scope.launch {
+                                snackbarHostState.showSnackbar(context.getString(R.string.toast_copied))
+                            }
                             showMoreMenu = false
                         }
                     )

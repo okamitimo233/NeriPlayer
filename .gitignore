@@ -18,3 +18,4 @@ local.properties
 /.idea/.name
 /.snow
 AGENTS.md
+/.spec-workflow/

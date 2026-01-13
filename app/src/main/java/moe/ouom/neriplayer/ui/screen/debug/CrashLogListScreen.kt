@@ -19,8 +19,8 @@ package moe.ouom.neriplayer.ui.screen.debug
  * along with this software.
  * If not, see <https://www.gnu.org/licenses/>.
  *
- * File: moe.ouom.neriplayer.ui.screen.debug/LogListScreen
- * Created: 2025/8/17
+ * File: moe.ouom.neriplayer.ui.screen.debug/CrashLogListScreen
+ * Created: 2025/1/11
  */
 
 import androidx.compose.foundation.clickable
@@ -34,19 +34,17 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.DeleteOutline
-import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Error
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.ui.LocalMiniPlayerHeight
-import moe.ouom.neriplayer.util.NPLogger
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -54,7 +52,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LogListScreen(
+fun CrashLogListScreen(
     onBack: () -> Unit,
     onLogFileClick: (String) -> Unit
 ) {
@@ -63,11 +61,15 @@ fun LogListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val showClearConfirmDialog = remember { mutableStateOf(false) }
 
-    val logFilesState = remember {
+    val crashLogFilesState = remember {
         mutableStateOf(
-            NPLogger.getLogDirectory(context)?.listFiles { file ->
-                file.isFile && file.name.endsWith(".txt")
-            }?.sortedByDescending { it.lastModified() } ?: emptyList()
+            run {
+                val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+                val crashDir = File(baseDir, "crashes")
+                crashDir.listFiles { file ->
+                    file.isFile && file.name.endsWith(".txt")
+                }?.sortedByDescending { it.lastModified() } ?: emptyList()
+            }
         )
     }
 
@@ -75,16 +77,17 @@ fun LogListScreen(
         AlertDialog(
             onDismissRequest = { showClearConfirmDialog.value = false },
             title = { Text(stringResource(R.string.dialog_confirm_clear)) },
-            text = { Text(stringResource(R.string.log_delete_confirm)) },
+            text = { Text(stringResource(R.string.crash_log_clear_confirm)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         showClearConfirmDialog.value = false
                         coroutineScope.launch {
-                            val directory = NPLogger.getLogDirectory(context)
+                            val baseDir = context.getExternalFilesDir(null) ?: context.filesDir
+                            val crashDir = File(baseDir, "crashes")
                             var clearedCount = 0
                             withContext(Dispatchers.IO) {
-                                directory?.listFiles { file ->
+                                crashDir.listFiles { file ->
                                     file.isFile && file.name.endsWith(".txt")
                                 }?.forEach {
                                     if (it.delete()) {
@@ -92,9 +95,8 @@ fun LogListScreen(
                                     }
                                 }
                             }
-                            // 更新UI
-                            logFilesState.value = emptyList()
-                            snackbarHostState.showSnackbar(context.getString(R.string.log_cleared_count, clearedCount))
+                            crashLogFilesState.value = emptyList()
+                            snackbarHostState.showSnackbar(context.getString(R.string.crash_log_cleared, clearedCount))
                         }
                     }
                 ) {
@@ -122,14 +124,14 @@ fun LogListScreen(
         },
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.log_app)) },
+                title = { Text(stringResource(R.string.crash_log_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = stringResource(R.string.action_back))
                     }
                 },
                 actions = {
-                    if (logFilesState.value.isNotEmpty()) {
+                    if (crashLogFilesState.value.isNotEmpty()) {
                         IconButton(onClick = { showClearConfirmDialog.value = true }) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = stringResource(R.string.log_clear))
                         }
@@ -144,19 +146,19 @@ fun LogListScreen(
             .padding(padding)
             .padding(bottom = miniH)
         ) {
-            if (logFilesState.value.isEmpty()) {
+            if (crashLogFilesState.value.isEmpty()) {
                 item {
                     ListItem(
-                        headlineContent = { Text(stringResource(R.string.log_no_file)) },
-                        supportingContent = { Text(stringResource(R.string.log_enable_hint)) }
+                        headlineContent = { Text("暂无崩溃日志") },
+                        supportingContent = { Text("应用崩溃时会自动记录日志") }
                     )
                 }
             } else {
-                items(logFilesState.value) { file ->
+                items(crashLogFilesState.value) { file ->
                     ListItem(
                         headlineContent = { Text(file.name) },
                         supportingContent = { Text(formatFileMeta(file)) },
-                        leadingContent = { Icon(Icons.Outlined.Description, null) },
+                        leadingContent = { Icon(Icons.Outlined.Error, null, tint = MaterialTheme.colorScheme.error) },
                         modifier = Modifier.clickable { onLogFileClick(file.absolutePath) }
                     )
                 }

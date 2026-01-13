@@ -1,4 +1,4 @@
-package moe.ouom.neriplayer.ui.viewmodel.playlist
+﻿package moe.ouom.neriplayer.ui.viewmodel.playlist
 
 /*
  * NeriPlayer - A unified Android player for streaming music and videos from multiple online platforms.
@@ -25,7 +25,6 @@ package moe.ouom.neriplayer.ui.viewmodel.playlist
 
 import android.app.Application
 import android.os.Parcelable
-import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +33,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.parcelize.Parcelize
+import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.core.api.search.MusicPlatform
 import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.ui.viewmodel.tab.NeteaseAlbum
@@ -63,9 +63,18 @@ data class SongItem(
     val durationMs: Long,
     val coverUrl: String?,
     val matchedLyric: String? = null,
+    val matchedTranslatedLyric: String? = null,
     val matchedLyricSource: MusicPlatform? = null,
     val matchedSongId: String? = null,
-    val userLyricOffsetMs: Long = 0L
+    val userLyricOffsetMs: Long = 0L,
+    val customCoverUrl: String? = null,
+    val customName: String? = null,
+    val customArtist: String? = null,
+    val originalName: String? = null,
+    val originalArtist: String? = null,
+    val originalCoverUrl: String? = null,
+    val originalLyric: String? = null,
+    val originalTranslatedLyric: String? = null
 ) : Parcelable
 
 data class PlaylistDetailUiState(
@@ -107,7 +116,7 @@ class PlaylistDetailViewModel(application: Application) : AndroidViewModel(appli
     }
 
     fun startPlaylist(playlist: NeteasePlaylist) {
-        if (playlistId == playlist.id && _uiState.value.header != null && _uiState.value.tracks.isNotEmpty()) return
+        // 移除缓存检查，确保每次进入都能获取最新数据
         playlistId = playlist.id
 
         // 用入口数据把 header 预填
@@ -142,23 +151,23 @@ class PlaylistDetailViewModel(application: Application) : AndroidViewModel(appli
                     tracks = tracks
                 )
             } catch (e: IOException) {
-                Log.e(TAG_PD, "Network/Server error", e)
+                NPLogger.e(TAG_PD, "Network/Server error", e)
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    error = "网络异常或服务器异常：${e.message ?: e.javaClass.simpleName}"
+                    error = "Network or server error: ${e.message ?: e.javaClass.simpleName}"  // Localized in UI
                 )
             } catch (e: Exception) {
-                Log.e(TAG_PD, "Unexpected error", e)
+                NPLogger.e(TAG_PD, "Unexpected error", e)
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    error = "解析/未知错误：${e.message ?: e.javaClass.simpleName}"
+                    error = "Parse/unknown error: ${e.message ?: e.javaClass.simpleName}"  // Localized in UI
                 )
             }
         }
     }
     
     fun startAlbum(album: NeteaseAlbum) {
-        if (playlistId == album.id && _uiState.value.header != null && _uiState.value.tracks.isNotEmpty()) return
+        // 移除缓存检查，确保每次进入都能获取最新数据
         playlistId = album.id
 
         // 用入口数据把 header 预填
@@ -193,16 +202,16 @@ class PlaylistDetailViewModel(application: Application) : AndroidViewModel(appli
                     tracks = tracks
                 )
             } catch (e: IOException) {
-                Log.e(TAG_PD, "Network/Server error", e)
+                NPLogger.e(TAG_PD, "Network/Server error", e)
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    error = "网络异常或服务器异常：${e.message ?: e.javaClass.simpleName}"
+                    error = "Network or server error: ${e.message ?: e.javaClass.simpleName}"  // Localized in UI
                 )
             } catch (e: Exception) {
-                Log.e(TAG_PD, "Unexpected error", e)
+                NPLogger.e(TAG_PD, "Unexpected error", e)
                 _uiState.value = _uiState.value.copy(
                     loading = false,
-                    error = "解析/未知错误：${e.message ?: e.javaClass.simpleName}"
+                    error = "Parse/unknown error: ${e.message ?: e.javaClass.simpleName}"  // Localized in UI
                 )
             }
         }
@@ -238,9 +247,9 @@ class PlaylistDetailViewModel(application: Application) : AndroidViewModel(appli
     private fun parseDetailFromPlaylist(raw: String): ParsedDetail {
         val root = JSONObject(raw)
         val code = root.optInt("code", -1)
-        require(code == 200) { "接口返回异常 code=$code" }
+        require(code == 200) { getApplication<Application>().getString(R.string.error_api_code, code) }
 
-        val pl = root.optJSONObject("playlist") ?: error("缺少 playlist 节点")
+        val pl = root.optJSONObject("playlist") ?: error(getApplication<Application>().getString(R.string.error_missing_node, "playlist"))
 
         val header = PlaylistHeader(
             id = pl.optLong("id"),
@@ -295,9 +304,9 @@ class PlaylistDetailViewModel(application: Application) : AndroidViewModel(appli
     private fun parseDetailFromAlbum(raw: String): ParsedDetail {
         val root = JSONObject(raw)
         val code = root.optInt("code", -1)
-        require(code == 200) { "接口返回异常 code=$code" }
+        require(code == 200) { getApplication<Application>().getString(R.string.error_api_code, code) }
 
-        val al = root.optJSONObject("album") ?: error("缺少 album 节点")
+        val al = root.optJSONObject("album") ?: error(getApplication<Application>().getString(R.string.error_missing_node, "album"))
         val cover = toHttps(al.optString("picUrl", "")) ?: ""
 
         val header = PlaylistHeader(

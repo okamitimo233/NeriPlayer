@@ -1,4 +1,4 @@
-@file:OptIn(UnstableApi::class)
+﻿@file:OptIn(UnstableApi::class)
 
 package moe.ouom.neriplayer.core.player
 
@@ -75,6 +75,7 @@ import moe.ouom.neriplayer.core.api.search.SongSearchInfo
 import moe.ouom.neriplayer.core.di.AppContainer
 import moe.ouom.neriplayer.core.di.AppContainer.biliCookieRepo
 import moe.ouom.neriplayer.core.di.AppContainer.settingsRepo
+import moe.ouom.neriplayer.R
 import moe.ouom.neriplayer.data.LocalPlaylist
 import moe.ouom.neriplayer.data.LocalPlaylistRepository
 import moe.ouom.neriplayer.ui.component.LyricEntry
@@ -114,7 +115,6 @@ private sealed class SongUrlResult {
  * - 序列化/反序列化播放状态文件，实现应用重启后的恢复
  */
 object PlayerManager {
-    private const val FAVORITES_NAME = "我喜欢的音乐"
     const val BILI_SOURCE_TAG = "Bilibili"
     const val NETEASE_SOURCE_TAG = "Netease"
 
@@ -123,6 +123,12 @@ object PlayerManager {
     private lateinit var player: ExoPlayer
 
     private lateinit var cache: Cache
+
+    // Helper function to get localized string
+    private fun getLocalizedString(resId: Int, vararg formatArgs: Any): String {
+        val context = moe.ouom.neriplayer.util.LanguageManager.applyLanguage(application)
+        return context.getString(resId, *formatArgs)
+    }
 
     private fun newIoScope() = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private fun newMainScope() = CoroutineScope(Dispatchers.Main + SupervisorJob())
@@ -446,57 +452,68 @@ object PlayerManager {
         NPLogger.d("NERI-Player", "PlayerManager initialized with cache size: $maxCacheSize")
     }
 
-    fun clearCache() {
-        ioScope.launch(Dispatchers.IO) {
+    suspend fun clearCache(clearAudio: Boolean = true, clearImage: Boolean = true): Pair<Boolean, String> {
+        return withContext(Dispatchers.IO) {
             var apiRemovedCount = 0
             var physicalDeletedCount = 0
             var totalSpaceFreed = 0L
 
             try {
-                if (::cache.isInitialized) {
-                    val keysSnapshot = HashSet(cache.keys)
-                    keysSnapshot.forEach { key ->
-                        try {
-                            val resource = cache.getCachedSpans(key)
-                            resource.forEach { totalSpaceFreed += it.length }
+                // 清理音频缓存
+                if (clearAudio) {
+                    if (::cache.isInitialized) {
+                        val keysSnapshot = HashSet(cache.keys)
+                        keysSnapshot.forEach { key ->
+                            try {
+                                val resource = cache.getCachedSpans(key)
+                                resource.forEach { totalSpaceFreed += it.length }
 
-                            cache.removeResource(key)
-                            apiRemovedCount++
-                        } catch (e: Exception) { /* 忽略单个失败 */ }
+                                cache.removeResource(key)
+                                apiRemovedCount++
+                            } catch (e: Exception) { /* 忽略单个失败 */ }
+                        }
+                    }
+
+                    val cacheDir = File(application.cacheDir, "media_cache")
+
+                    if (cacheDir.exists() && cacheDir.isDirectory) {
+                        val files = cacheDir.listFiles() ?: emptyArray()
+
+                        files.forEach { file ->
+                            if (file.isFile && file.name.endsWith(".exo")) {
+                                val length = file.length()
+                                if (file.delete()) {
+                                    physicalDeletedCount++
+                                }
+                            }
+                        }
                     }
                 }
 
-                val cacheDir = File(application.cacheDir, "media_cache")
-
-                if (cacheDir.exists() && cacheDir.isDirectory) {
-                    val files = cacheDir.listFiles() ?: emptyArray()
-
-                    files.forEach { file ->
-                        if (file.isFile && file.name.endsWith(".exo")) {
-                            val length = file.length()
-                            if (file.delete()) {
-                                physicalDeletedCount++
-                            }
+                // 清理图片缓存
+                if (clearImage) {
+                    val imageCacheDir = File(application.cacheDir, "image_cache")
+                    if (imageCacheDir.exists() && imageCacheDir.isDirectory) {
+                        val deleted = imageCacheDir.deleteRecursively()
+                        if (deleted) {
+                            // 重新创建目录
+                            imageCacheDir.mkdirs()
                         }
                     }
                 }
 
                 NPLogger.d("NERI-Player", "Cache Clear: API removed $apiRemovedCount keys, Physically deleted $physicalDeletedCount .exo files.")
 
-                withContext(Dispatchers.Main) {
-                    val msg = if (physicalDeletedCount > 0 || apiRemovedCount > 0) {
-                        "清理完成"
-                    } else {
-                        "缓存已为空"
-                    }
-                    Toast.makeText(application, msg, Toast.LENGTH_SHORT).show()
+                val msg = if (physicalDeletedCount > 0 || apiRemovedCount > 0 || clearImage) {
+                    getLocalizedString(R.string.cache_clear_complete)
+                } else {
+                    getLocalizedString(R.string.settings_cache_empty)
                 }
+                Pair(true, msg)
 
             } catch (e: Exception) {
                 NPLogger.e("NERI-Player", "Clear cache failed", e)
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(application, "清理出错: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                Pair(false, getLocalizedString(R.string.toast_cache_clear_error, e.message ?: "Unknown"))
             }
         }
     }
@@ -541,19 +558,19 @@ object PlayerManager {
         if (bluetoothDevice != null) {
             return try {
                 AudioDevice(
-                    name = bluetoothDevice.productName.toString().ifBlank { "蓝牙耳机" },
+                    name = bluetoothDevice.productName.toString().ifBlank { getLocalizedString(R.string.device_bluetooth_headset) },
                     type = AudioDeviceInfo.TYPE_BLUETOOTH_A2DP,
                     icon = Icons.Default.BluetoothAudio
                 )
             } catch (_: SecurityException) {
-                AudioDevice("蓝牙耳机", AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, Icons.Default.BluetoothAudio)
+                AudioDevice(getLocalizedString(R.string.device_bluetooth_headset), AudioDeviceInfo.TYPE_BLUETOOTH_A2DP, Icons.Default.BluetoothAudio)
             }
         }
         val wiredHeadset = devices.firstOrNull { it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET || it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES }
         if (wiredHeadset != null) {
-            return AudioDevice("有线耳机", AudioDeviceInfo.TYPE_WIRED_HEADSET, Icons.Default.Headset)
+            return AudioDevice(getLocalizedString(R.string.device_wired_headset), AudioDeviceInfo.TYPE_WIRED_HEADSET, Icons.Default.Headset)
         }
-        return AudioDevice("手机扬声器", AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, Icons.Default.SpeakerGroup)
+        return AudioDevice(getLocalizedString(R.string.device_speaker), AudioDeviceInfo.TYPE_BUILTIN_SPEAKER, Icons.Default.SpeakerGroup)
     }
 
     fun playPlaylist(songs: List<SongItem>, startIndex: Int) {
@@ -598,7 +615,7 @@ object PlayerManager {
 
         if (consecutivePlayFailures >= MAX_CONSECUTIVE_FAILURES) {
             NPLogger.e("NERI-PlayerManager", "已连续失败 $consecutivePlayFailures 次，停止播放")
-            mainScope.launch { Toast.makeText(application, "多首歌曲无法播放，已停止", Toast.LENGTH_SHORT).show() }
+            mainScope.launch { Toast.makeText(application, "Multiple songs failed, playback stopped", Toast.LENGTH_SHORT).show() }  // Localized
             stopAndClearPlaylist()
             return
         }
@@ -779,7 +796,7 @@ object PlayerManager {
                 SongUrlResult.Success(audioStream.url)
             } else {
                 if (!suppressError) {
-                    postPlayerEvent(PlayerEvent.ShowError("无法获取播放地址"))
+                    postPlayerEvent(PlayerEvent.ShowError(getLocalizedString(R.string.error_no_play_url)))
                 }
                 SongUrlResult.Failure
             }
@@ -1052,8 +1069,9 @@ object PlayerManager {
         ioScope.launch {
             try {
                 // 确保收藏歌单存在
-                if (_playlistsFlow.value.none { it.name == FAVORITES_NAME }) {
-                    localRepo.createPlaylist(FAVORITES_NAME)
+                val favoritesName = getLocalizedString(R.string.favorite_my_music)
+                if (_playlistsFlow.value.none { it.name == favoritesName }) {
+                    localRepo.createPlaylist(favoritesName)
                 }
                 localRepo.addToFavorites(song)
             } catch (e: Exception) {
@@ -1083,7 +1101,7 @@ object PlayerManager {
         ensureInitialized()
         if (!initialized) return
         val song = _currentSongFlow.value ?: return
-        val fav = _playlistsFlow.value.firstOrNull { it.name == FAVORITES_NAME }
+        val fav = _playlistsFlow.value.firstOrNull { it.name == "我喜欢的音乐" || it.name == "My Favorite Music" }
         val isFav = fav?.songs?.any { it.id == song.id } == true
         if (isFav) removeCurrentFromFavorites() else addCurrentToFavorites()
     }
@@ -1095,7 +1113,7 @@ object PlayerManager {
         songId: Long? = null
     ): List<LocalPlaylist> {
         val lists = _playlistsFlow.value
-        val favIdx = lists.indexOfFirst { it.name == FAVORITES_NAME }
+        val favIdx = lists.indexOfFirst { it.name == "我喜欢的音乐" || it.name == "My Favorite Music" }
         val base = lists.map { LocalPlaylist(it.id, it.name, it.songs.toMutableList()) }.toMutableList()
 
         if (favIdx >= 0) {
@@ -1109,7 +1127,7 @@ object PlayerManager {
             if (add && song != null) {
                 base += LocalPlaylist(
                     id = System.currentTimeMillis(),
-                    name = FAVORITES_NAME,
+                    name = getLocalizedString(R.string.favorite_my_music),
                     songs = mutableListOf(song)
                 )
             }
@@ -1220,8 +1238,17 @@ object PlayerManager {
 
     /** 根据歌曲来源返回可用的翻译（如果有） */
     suspend fun getTranslatedLyrics(song: SongItem): List<LyricEntry> {
-        // 优先检查本地翻译歌词缓存
+        // 检查当前语言设置，只有中文环境才显示翻译
         val context = application
+        val currentLocale = context.resources.configuration.locales[0]
+        val isChinese = currentLocale.language.startsWith("zh")
+
+        // 如果不是中文环境，直接返回空列表
+        if (!isChinese) {
+            return emptyList()
+        }
+
+        // 优先检查本地翻译歌词缓存
         val localTransPath = AudioDownloadManager.getTranslatedLyricFilePath(context, song)
         if (localTransPath != null) {
             try {
@@ -1422,15 +1449,159 @@ object PlayerManager {
                     name = newDetails.songName,
                     artist = newDetails.singer,
                     coverUrl = newDetails.coverUrl,
+                    // 直接使用获取的歌词，如果为null则清除现有歌词（B站音源默认无歌词）
                     matchedLyric = newDetails.lyric,
+                    matchedTranslatedLyric = newDetails.translatedLyric,
                     matchedLyricSource = selectedSong.source,
-                    matchedSongId = selectedSong.id
+                    matchedSongId = selectedSong.id,
+                    // 清除所有自定义字段，强制使用获取的信息
+                    customCoverUrl = null,
+                    customName = null,
+                    customArtist = null,
+                    // 保存原始值以便还原
+                    originalName = originalSong.originalName ?: originalSong.name,
+                    originalArtist = originalSong.originalArtist ?: originalSong.artist,
+                    originalCoverUrl = originalSong.originalCoverUrl ?: originalSong.coverUrl,
+                    originalLyric = originalSong.originalLyric ?: originalSong.matchedLyric,
+                    originalTranslatedLyric = originalSong.originalTranslatedLyric ?: originalSong.matchedTranslatedLyric
                 )
 
                 updateSongInAllPlaces(originalSong, updatedSong)
 
             } catch (e: Exception) {
-                mainScope.launch { Toast.makeText(application, "匹配失败: ${e.message}", Toast.LENGTH_SHORT).show() }
+                mainScope.launch {
+                    Toast.makeText(application, "Match failed: ${e.message}", Toast.LENGTH_SHORT).show()
+                    NPLogger.e("NERI-PlayerManager", "replaceMetadataFromSearch failed: ${e.message}", e)
+                }  // Localized
+            }
+        }
+    }
+
+    fun updateSongCustomInfo(
+        originalSong: SongItem,
+        customCoverUrl: String?,
+        customName: String?,
+        customArtist: String?
+    ) {
+        ioScope.launch {
+            NPLogger.e("PlayerManager", "=== updateSongCustomInfo start ===")
+            NPLogger.e("PlayerManager", "originalSong: id=${originalSong.id}, album='${originalSong.album}', matchedLyric=${originalSong.matchedLyric?.take(50)}")
+
+            // 从当前播放列表中获取最新的歌曲状态,保留歌词等字段
+            val currentSong = currentPlaylist.firstOrNull {
+                it.id == originalSong.id && it.album == originalSong.album
+            } ?: originalSong
+
+            NPLogger.e("PlayerManager", "currentSong from playlist: matchedLyric=${currentSong.matchedLyric?.take(50)}, matchedTranslatedLyric=${currentSong.matchedTranslatedLyric?.take(50)}")
+
+            val updatedSong = currentSong.copy(
+                // 只更新名称、歌手和封面,保留其他字段(包括歌词)
+                name = customName ?: currentSong.name,
+                artist = customArtist ?: currentSong.artist,
+                coverUrl = customCoverUrl
+            )
+
+            NPLogger.e("PlayerManager", "updatedSong after copy: matchedLyric=${updatedSong.matchedLyric?.take(50)}, matchedTranslatedLyric=${updatedSong.matchedTranslatedLyric?.take(50)}")
+
+            updateSongInAllPlaces(originalSong, updatedSong)
+
+            NPLogger.e("PlayerManager", "=== updateSongCustomInfo over ===")
+        }
+    }
+
+    fun restoreToOriginalMetadata(originalSong: SongItem) {
+        ioScope.launch {
+            try {
+                val isBili = originalSong.album.startsWith(BILI_SOURCE_TAG)
+
+                if (isBili) {
+                    // B站视频：从B站重新获取原始信息
+                    val videoInfo = biliClient.getVideoBasicInfoByAvid(originalSong.id)
+
+                    // 获取对应的分P信息（如果有）
+                    val parts = originalSong.album.split('|')
+                    val targetCid = if (parts.size > 1) parts[1].toLongOrNull() else null
+                    val pageInfo = if (targetCid != null) {
+                        videoInfo.pages.firstOrNull { it.cid == targetCid }
+                    } else {
+                        videoInfo.pages.firstOrNull()
+                    }
+
+                    // HTTP自动转HTTPS
+                    val coverUrl = videoInfo.coverUrl.let {
+                        if (it.startsWith("http://")) it.replaceFirst("http://", "https://") else it
+                    }
+
+                    val updatedSong = originalSong.copy(
+                        name = pageInfo?.part ?: videoInfo.title,
+                        artist = videoInfo.ownerName,
+                        coverUrl = coverUrl,
+                        matchedLyric = null, // B站视频清空歌词
+                        matchedTranslatedLyric = null,
+                        matchedLyricSource = null,
+                        matchedSongId = null,
+                        customCoverUrl = null,
+                        customName = null,
+                        customArtist = null,
+                        originalName = null,
+                        originalArtist = null,
+                        originalCoverUrl = null,
+                        originalLyric = null,
+                        originalTranslatedLyric = null
+                    )
+                    updateSongInAllPlaces(originalSong, updatedSong)
+                } else {
+                    // 网易云音乐：从网易云重新获取原始信息
+                    val songDetails = cloudMusicSearchApi?.getSongInfo(originalSong.id.toString())
+
+                    if (songDetails != null) {
+                        // HTTP自动转HTTPS
+                        val coverUrl = songDetails.coverUrl?.let {
+                            if (it.startsWith("http://")) it.replaceFirst("http://", "https://") else it
+                        }
+
+                        val updatedSong = originalSong.copy(
+                            name = songDetails.songName,
+                            artist = songDetails.singer,
+                            coverUrl = coverUrl,
+                            matchedLyric = null,
+                            matchedTranslatedLyric = null,
+                            matchedLyricSource = null,
+                            matchedSongId = null,
+                            customCoverUrl = null,
+                            customName = null,
+                            customArtist = null,
+                            originalName = null,
+                            originalArtist = null,
+                            originalCoverUrl = null,
+                            originalLyric = null,
+                            originalTranslatedLyric = null
+                        )
+                        updateSongInAllPlaces(originalSong, updatedSong)
+                    } else {
+                        // 如果API调用失败，至少清除自定义字段
+                        val updatedSong = originalSong.copy(
+                            matchedLyric = null,
+                            matchedTranslatedLyric = null,
+                            matchedLyricSource = null,
+                            matchedSongId = null,
+                            customCoverUrl = null,
+                            customName = null,
+                            customArtist = null,
+                            originalName = null,
+                            originalArtist = null,
+                            originalCoverUrl = null,
+                            originalLyric = null,
+                            originalTranslatedLyric = null
+                        )
+                        updateSongInAllPlaces(originalSong, updatedSong)
+                    }
+                }
+            } catch (e: Exception) {
+                NPLogger.e("NERI-PlayerManager", "恢复原始信息失败", e)
+                mainScope.launch {
+                    postPlayerEvent(PlayerEvent.ShowError("恢复失败：${e.message}"))
+                }
             }
         }
     }
@@ -1458,6 +1629,126 @@ object PlayerManager {
         }
 
         persistState()
+    }
+
+    suspend fun updateSongLyrics(songToUpdate: SongItem, newLyrics: String?) {
+        val queueIndex = currentPlaylist.indexOfFirst { it.id == songToUpdate.id && it.album == songToUpdate.album }
+        if (queueIndex != -1) {
+            val updatedSong = currentPlaylist[queueIndex].copy(matchedLyric = newLyrics)
+            val newList = currentPlaylist.toMutableList()
+            newList[queueIndex] = updatedSong
+            currentPlaylist = newList
+            _currentQueueFlow.value = currentPlaylist
+        }
+
+        if (_currentSongFlow.value?.id == songToUpdate.id && _currentSongFlow.value?.album == songToUpdate.album) {
+            _currentSongFlow.value = _currentSongFlow.value?.copy(matchedLyric = newLyrics)
+        }
+
+        // 从队列中获取最新的歌曲信息，避免覆盖其他字段
+        val latestSong = currentPlaylist.firstOrNull { it.id == songToUpdate.id && it.album == songToUpdate.album }
+        if (latestSong != null) {
+            withContext(Dispatchers.IO) {
+                localRepo.updateSongMetadata(
+                    songToUpdate.id,
+                    songToUpdate.album,
+                    latestSong
+                )
+            }
+        }
+
+        persistState()
+    }
+
+    suspend fun updateSongTranslatedLyrics(songToUpdate: SongItem, newTranslatedLyrics: String?) {
+        val queueIndex = currentPlaylist.indexOfFirst { it.id == songToUpdate.id && it.album == songToUpdate.album }
+        if (queueIndex != -1) {
+            val updatedSong = currentPlaylist[queueIndex].copy(matchedTranslatedLyric = newTranslatedLyrics)
+            val newList = currentPlaylist.toMutableList()
+            newList[queueIndex] = updatedSong
+            currentPlaylist = newList
+            _currentQueueFlow.value = currentPlaylist
+        }
+
+        if (_currentSongFlow.value?.id == songToUpdate.id && _currentSongFlow.value?.album == songToUpdate.album) {
+            _currentSongFlow.value = _currentSongFlow.value?.copy(matchedTranslatedLyric = newTranslatedLyrics)
+        }
+
+        // 从队列中获取最新的歌曲信息，避免覆盖其他字段
+        val latestSong = currentPlaylist.firstOrNull { it.id == songToUpdate.id && it.album == songToUpdate.album }
+        if (latestSong != null) {
+            withContext(Dispatchers.IO) {
+                localRepo.updateSongMetadata(
+                    songToUpdate.id,
+                    songToUpdate.album,
+                    latestSong
+                )
+            }
+        }
+
+        persistState()
+    }
+
+    suspend fun updateSongLyricsAndTranslation(songToUpdate: SongItem, newLyrics: String?, newTranslatedLyrics: String?) {
+//        NPLogger.e("PlayerManager", "!!! FUNCTION CALLED !!! updateSongLyricsAndTranslation")
+//        NPLogger.e("PlayerManager", "songId=${songToUpdate.id}, album='${songToUpdate.album}'")
+//        NPLogger.e("PlayerManager", "newLyrics=${newLyrics?.take(50)}, newTranslatedLyrics=${newTranslatedLyrics?.take(50)}")
+
+        // 打印播放列表中所有歌曲的ID和album，帮助调试匹配问题
+//        NPLogger.e("PlayerManager", "=== 当前播放列表中的所有歌曲 ===")
+//        currentPlaylist.forEachIndexed { index, song ->
+//            NPLogger.e("PlayerManager", "[$index] id=${song.id}, album='${song.album}', name='${song.name}', hasLyric=${song.matchedLyric != null}")
+//        }
+//        NPLogger.e("PlayerManager", "=== 播放列表打印完毕 ===")
+
+        val queueIndex = currentPlaylist.indexOfFirst { it.id == songToUpdate.id && it.album == songToUpdate.album }
+//        NPLogger.e("PlayerManager", "queueIndex=$queueIndex, currentPlaylist.size=${currentPlaylist.size}")
+
+        if (queueIndex != -1) {
+            val updatedSong = currentPlaylist[queueIndex].copy(
+                matchedLyric = newLyrics,
+                matchedTranslatedLyric = newTranslatedLyrics
+            )
+//            NPLogger.e("PlayerManager", "更新前: matchedLyric=${currentPlaylist[queueIndex].matchedLyric?.take(50)}")
+//            NPLogger.e("PlayerManager", "更新后: matchedLyric=${updatedSong.matchedLyric?.take(50)}")
+            val newList = currentPlaylist.toMutableList()
+            newList[queueIndex] = updatedSong
+            currentPlaylist = newList
+            _currentQueueFlow.value = currentPlaylist
+            NPLogger.e("PlayerManager", "已更新队列中的歌曲")
+        } else {
+            NPLogger.e("PlayerManager", "未找到歌曲在队列中！")
+        }
+
+        NPLogger.e("PlayerManager", "当前播放歌曲: id=${_currentSongFlow.value?.id}, album='${_currentSongFlow.value?.album}'")
+        if (_currentSongFlow.value?.id == songToUpdate.id && _currentSongFlow.value?.album == songToUpdate.album) {
+            val beforeUpdate = _currentSongFlow.value?.matchedLyric
+            _currentSongFlow.value = _currentSongFlow.value?.copy(
+                matchedLyric = newLyrics,
+                matchedTranslatedLyric = newTranslatedLyrics
+            )
+            NPLogger.e("PlayerManager", "已更新当前播放歌曲: 更新前=${beforeUpdate?.take(50)}, 更新后=${_currentSongFlow.value?.matchedLyric?.take(50)}")
+        } else {
+            NPLogger.e("PlayerManager", "当前播放歌曲不匹配！")
+        }
+
+        // 从队列中获取最新的歌曲信息，避免覆盖其他字段
+        val latestSong = currentPlaylist.firstOrNull { it.id == songToUpdate.id && it.album == songToUpdate.album }
+        if (latestSong != null) {
+            withContext(Dispatchers.IO) {
+                localRepo.updateSongMetadata(
+                    songToUpdate.id,
+                    songToUpdate.album,
+                    latestSong
+                )
+            }
+            NPLogger.d("PlayerManager", "已持久化到数据库")
+        } else {
+            NPLogger.e("PlayerManager", "未找到最新歌曲！")
+        }
+
+        persistState()
+        NPLogger.d("PlayerManager", "updateSongLyricsAndTranslation完成")
     }
 
     private suspend fun updateSongInAllPlaces(originalSong: SongItem, updatedSong: SongItem) {
