@@ -241,11 +241,6 @@ fun NowPlayingScreen(
     // 缩放动画
     var bumpKey by remember(currentSong?.id) { mutableIntStateOf(0) }
     if (isFavorite) 1.0f else 1.0f
-    val scale by animateFloatAsState(
-        targetValue = if (bumpKey == 0) 1.0f else 1.12f,
-        animationSpec = spring(stiffness = Spring.StiffnessMedium, dampingRatio = 0.42f),
-        label = "heart_bump_scale"
-    )
 
     val queue by PlayerManager.currentQueueFlow.collectAsState()
     val displayedQueue = remember(queue) { queue }
@@ -1005,7 +1000,7 @@ fun NowPlayingScreen(
                                             onDismissRequest = { showMoreMenu = false }
                                         ) {
                                             DropdownMenuItem(
-                                                text = { Text(stringResource(R.string.playlist_add_to_queue)) },
+                                                text = { Text(stringResource(R.string.local_playlist_play_next)) },
                                                 onClick = {
                                                     PlayerManager.addToQueueNext(song)
                                                     showMoreMenu = false
@@ -1161,7 +1156,6 @@ fun MoreOptionsSheet(
     var showOffsetSheet by remember { mutableStateOf(false) }
     var showFontSizeSheet by remember { mutableStateOf(false) }
     var showEditInfoSheet by remember { mutableStateOf(false) }
-    var enterAlbum by remember { mutableStateOf(false) }
 
     val focusManager = LocalFocusManager.current
     val context = LocalContext.current
